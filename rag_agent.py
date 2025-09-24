@@ -8,6 +8,10 @@ from typing import Optional, List, Dict, Any
 import logging
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
 
 # === Configuración de logging ===
 logger = logging.getLogger(__name__)
