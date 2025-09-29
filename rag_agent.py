@@ -96,15 +96,6 @@ class RAGAgent:
                     temperature=self.temperature
                 )
             
-            response = self.llm.invoke(f"Antworte natürlich und hilfreich auf: {query}")
-            
-            # Manejar diferentes tipos de respuesta
-            if hasattr(response, 'content'):
-                return response.content
-            elif isinstance(response, str):
-                return response
-            else:
-                return str(response)
                 
         except Exception as e:
             logger.error(f"Error en LLM invoke: {e}")
@@ -384,8 +375,17 @@ if __name__ == "__main__":
                 "input": "Hallo, was kannst du für mich tun?",
                 "history": []
             })
-            print(f"Respuesta: {result.get('output', result)}")
-        except Exception as e:
-            print(f"Error en test: {e}")
-    else:
-        print("❌ Error creando agente")
+            response = self.llm.invoke(f"Antworte natürlich und hilfreich auf: {query}")
+            # Normalizar la respuesta a str
+        if hasattr(response, 'content'):
+            result = response.content
+        else:
+            result = response
+        if isinstance(result, str):
+            return result
+        elif isinstance(result, list):
+            return "\n".join(str(item) for item in result)
+        elif isinstance(result, dict):
+            return str(result)
+        else:
+            return str(result)
