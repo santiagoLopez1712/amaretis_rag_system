@@ -1,12 +1,12 @@
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.agents import Tool, AgentExecutor, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 import logging
-import os
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -44,24 +44,18 @@ class RAGAgent:
         self.agent = None
         
     def load_existing_vectorstore(self) -> Optional[Chroma]:
-        """
-        Carga vectorstore existente con manejo de errores robusto
-        """
         try:
-            # Verificar si el directorio existe
             if not Path(self.persist_directory).exists():
                 logger.warning(f"Directorio {self.persist_directory} no existe")
                 return None
                 
-            # Cargar embeddings
             logger.info(f"Cargando embeddings: {self.embedding_model}")
             embeddings = HuggingFaceEmbeddings(
                 model_name=self.embedding_model,
-                model_kwargs={'device': 'cpu'},  # Especificar dispositivo
-                encode_kwargs={'normalize_embeddings': True}  # Normalizar para mejor performance
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True}
             )
             
-            # Cargar Chroma
             logger.info(f"Cargando vectorstore: {self.collection_name}")
             vectorstore = Chroma(
                 collection_name=self.collection_name,
@@ -69,7 +63,6 @@ class RAGAgent:
                 persist_directory=self.persist_directory
             )
             
-            # Verificar que tiene contenido
             try:
                 count = vectorstore._collection.count()
                 logger.info(f"Vectorstore cargado con {count} documentos")
@@ -86,48 +79,49 @@ class RAGAgent:
             return None
     
     def _safe_llm_invoke(self, query: str) -> str:
-        """
-        Invocación segura del LLM con manejo de errores
-        """
+        """Invocación segura del LLM con manejo de errores"""
         try:
             if not self.llm:
                 self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.0-flash", 
+                    model="gemini-2.0-flash",
                     temperature=self.temperature
                 )
+
+            response = self.llm.invoke(f"Antworte natürlich und hilfreich auf: {query}")
+
+            if hasattr(response, 'content') and isinstance(response.content, str):
+                return response.content
+            elif isinstance(response, str):
+                return response
+            else:
+                return str(response)
             
-                
         except Exception as e:
             logger.error(f"Error en LLM invoke: {e}")
             return f"Entschuldigung, ich hatte ein technisches Problem bei der Verarbeitung Ihrer Frage: {query}"
     
     def _create_qa_chain(self, vectorstore: Chroma) -> Optional[RetrievalQA]:
-        """
-        Crea cadena QA con configuración optimizada
-        """
         try:
             if not self.llm:
                 self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.0-flash", 
+                    model="gemini-2.0-flash",
                     temperature=self.temperature
                 )
             
-            # Configurar retriever con parámetros optimizados
             retriever = vectorstore.as_retriever(
                 search_type="similarity_score_threshold",
                 search_kwargs={
                     "k": self.retrieval_k,
-                    "score_threshold": 0.5  # Solo resultados relevantes
+                    "score_threshold": 0.5
                 }
             )
             
-            # Crear cadena QA
             qa_chain = RetrievalQA.from_chain_type(
                 llm=self.llm,
-                chain_type="stuff",  # Para documentos cortos
+                chain_type="stuff",
                 retriever=retriever,
                 verbose=self.debug,
-                return_source_documents=True  # Incluir fuentes
+                return_source_documents=True
             )
             
             return qa_chain
@@ -137,20 +131,16 @@ class RAGAgent:
             return None
     
     def _safe_qa_invoke(self, qa_chain: RetrievalQA, query: str) -> str:
-        """
-        Invocación segura de la cadena QA
-        """
         try:
             result = qa_chain.invoke({"query": query})
             
-            # Extraer respuesta
             if isinstance(result, dict):
                 answer = result.get("result", "")
                 sources = result.get("source_documents", [])
                 
                 if self.debug and sources:
                     logger.info(f"Fuentes encontradas: {len(sources)}")
-                    for i, doc in enumerate(sources[:3]):  # Solo primeras 3
+                    for i, doc in enumerate(sources[:3]):
                         logger.info(f"Fuente {i+1}: {doc.page_content[:100]}...")
                 
                 return answer if answer else "Keine relevanten Informationen gefunden."
@@ -162,16 +152,11 @@ class RAGAgent:
             return f"Fehler bei der Dokumentensuche: {e}"
     
     def setup_tools(self, vectorstore: Optional[Chroma] = None) -> List[Tool]:
-        """
-        Configura herramientas del agente con manejo robusto de errores
-        """
         tools = []
         
-        # Si no se pasa vectorstore, cargar el existente
         if vectorstore is None:
             vectorstore = self.load_existing_vectorstore()
         
-        # Tool de búsqueda en documentos
         if vectorstore:
             qa_chain = self._create_qa_chain(vectorstore)
             if qa_chain:
@@ -194,7 +179,6 @@ class RAGAgent:
         else:
             logger.warning("Kein Vectorstore verfügbar - document_search Tool nicht verfügbar")
         
-        # Tool de chat general
         tools.append(
             Tool(
                 name="general_chat",
@@ -211,11 +195,7 @@ class RAGAgent:
         return tools
     
     def create_marketing_agent(self, tools: List[Tool]) -> Optional[AgentExecutor]:
-        """
-        Crea agente especializado en marketing y comunicación
-        """
         try:
-            # Prompt especializado para AMARETIS
             prompt = ChatPromptTemplate.from_template("""
 Du bist ein intelligenter Marketing- und Kommunikations-Assistent für AMARETIS, 
 eine Full-Service-Werbeagentur in Göttingen.
@@ -266,26 +246,24 @@ Final Answer: [Deine finale, hilfreiche Antwort]
 
             if not self.llm:
                 self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.0-flash", 
+                    model="gemini-2.0-flash",
                     temperature=self.temperature
                 )
 
-            # Crear agente ReAct
             agent = create_react_agent(
                 llm=self.llm, 
                 tools=tools, 
                 prompt=prompt
             )
 
-            # Crear executor
             executor = AgentExecutor(
                 agent=agent,
                 tools=tools,
                 verbose=self.debug,
                 handle_parsing_errors=True,
-                max_iterations=5,  # Limitar iteraciones
-                max_execution_time=30,  # Timeout de 30 segundos
-                early_stopping_method="generate"  # Para respuestas más rápidas
+                max_iterations=5,
+                max_execution_time=30,
+                early_stopping_method="generate"
             )
             
             executor.name = "marketing_rag_agent"
@@ -296,22 +274,15 @@ Final Answer: [Deine finale, hilfreiche Antwort]
             return None
     
     def initialize_complete_agent(self) -> Optional[AgentExecutor]:
-        """
-        Inicializa el agente completo con todos los componentes
-        """
         logger.info("Inicializando RAG Agent completo...")
         
-        # Cargar vectorstore
         self.vectorstore = self.load_existing_vectorstore()
-        
-        # Configurar tools
         self.tools = self.setup_tools(self.vectorstore)
         
         if not self.tools:
             logger.error("No se pudieron configurar las herramientas")
             return None
         
-        # Crear agente
         self.agent = self.create_marketing_agent(self.tools)
         
         if self.agent:
@@ -323,32 +294,25 @@ Final Answer: [Deine finale, hilfreiche Antwort]
 
 # === Funciones de compatibilidad hacia atrás ===
 def load_existing_vectorstore():
-    """Función de compatibilidad - usar RAGAgent en su lugar"""
     logger.warning("Usando función deprecated. Considera usar RAGAgent class.")
     rag = RAGAgent()
     return rag.load_existing_vectorstore()
 
 def setup_tools(vectorstore: Optional[Chroma] = None):
-    """Función de compatibilidad - usar RAGAgent en su lugar"""
     logger.warning("Usando función deprecated. Considera usar RAGAgent class.")
     rag = RAGAgent()
     return rag.setup_tools(vectorstore)
 
 def create_agent(tools: list):
-    """Función de compatibilidad - usar RAGAgent en su lugar"""
     logger.warning("Usando función deprecated. Considera usar RAGAgent class.")
     rag = RAGAgent()
     return rag.create_marketing_agent(tools)
 
-# === Función de conveniencia para inicialización rápida ===
 def create_amaretis_rag_agent(
     collection_name: str = "amaretis_knowledge",
     persist_directory: str = "./chroma_amaretis_db",
     debug: bool = False
 ) -> Optional[AgentExecutor]:
-    """
-    Crear agente RAG configurado para AMARETIS de forma rápida
-    """
     try:
         rag = RAGAgent(
             collection_name=collection_name,
@@ -359,33 +323,3 @@ def create_amaretis_rag_agent(
     except Exception as e:
         logger.error(f"Error creando agente AMARETIS: {e}")
         return None
-
-if __name__ == "__main__":
-    # Test básico
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    
-    agent = create_amaretis_rag_agent(debug=True)
-    if agent:
-        print("✅ Agente creado exitosamente!")
-        
-        # Test simple
-        try:
-            result = agent.invoke({
-                "input": "Hallo, was kannst du für mich tun?",
-                "history": []
-            })
-            response = self.llm.invoke(f"Antworte natürlich und hilfreich auf: {query}")
-            # Normalizar la respuesta a str
-        if hasattr(response, 'content'):
-            result = response.content
-        else:
-            result = response
-        if isinstance(result, str):
-            return result
-        elif isinstance(result, list):
-            return "\n".join(str(item) for item in result)
-        elif isinstance(result, dict):
-            return str(result)
-        else:
-            return str(result)
