@@ -13,7 +13,7 @@ load_dotenv()
 
 # Rutas
 DATA_PATH = "structured_data.json"
-CHROMA_DIR = "chroma_amaretis_db"  # Base de datos Chroma
+CHROMA_DIR = "chroma_amaretis_db" # Base de datos Chroma
 
 def load_structured_data(json_path):
     """Carga datos estructurados desde JSON"""
