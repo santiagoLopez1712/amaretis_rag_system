@@ -13,7 +13,7 @@ load_dotenv()
 
 # Rutas
 DATA_PATH = "structured_data.json"
-CHROMA_DIR = "chroma_amaretis_db"  # Base de datos Chroma
+CHROMA_DIR = "chroma_amaretis_db"  # Base de datos Chroma
 
 def load_structured_data(json_path):
     """Carga datos estructurados desde JSON"""
@@ -30,29 +30,43 @@ def chunk_documents(documents, chunk_size=800, chunk_overlap=100):
     return splitter.split_documents(documents)
 
 def embed_and_store(chunks):
-    """Crea embeddings y los almacena en ChromaDB"""
+    """Crea embeddings y los almacena en ChromaDB, forzando la recreación de la DB."""
+    
+    # 1. Instanciar el modelo de embeddings
+    # Utilizamos un modelo open-source ligero y eficiente
     embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2",
-        model_kwargs={"device": "cpu"},  # ← fuerza CPU
-        encode_kwargs={"normalize_embeddings": True}
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    # Borrar base de datos antigua si existe
+    # 2. Borrar base de datos antigua si existe (DEBE SER LO PRIMERO)
     if os.path.exists(CHROMA_DIR):
+        print(f"🗑️ Borrando base de datos antigua en {CHROMA_DIR}...")
         shutil.rmtree(CHROMA_DIR)
 
-    # Crear nueva base de datos Chroma con telemetry desactivada
+    # 3. Crear nueva base de datos Chroma con los chunks
+    # Desactivamos explícitamente la telemetría (aunque la versión 0.1.4 ya la maneja)
     db = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
         persist_directory=CHROMA_DIR,
         collection_name="amaretis_knowledge",
-        anonymized_telemetry=True  # ← evita warnings
+        # Quitamos anonymized_telemetry, ya que la versión 0.1.4 de langchain-chroma 
+        # y la versión 0.5.23 de chromadb no lo necesitan y esto puede causar errores.
+        # Si usas la versión más reciente, sí lo necesitas, pero por ahora simplificamos.
     )
+    
+    # 4. Asegurarse de que los datos se guarden en disco
+    db.persist()
+
+    print(f"✅ Embeddings creados y guardados en la DB. Total de chunks: {len(chunks)}") 
+    
     return db
 
 def main():
     """Función principal"""
+    print("--- 🚀 Iniciando Ejecución de AMARETIS RAG System ---") # ¡Añade este print!
+    
+    print("🔹 1. Extracción de PDFs a JSON...")
     print("🔄 Cargando datos...")
     documents = load_structured_data(DATA_PATH)
     print(f"📄 {len(documents)} documentos encontrados.")
