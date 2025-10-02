@@ -14,12 +14,13 @@ def get_rag_documents(query: str) -> str:
     """
     try:
         # NOTE: Use the SAME embeddings model you used to create the index!
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        embeddings = HuggingFaceEmbeddings( model_name="sentence-transformers/all-mpnet-base-v2")
         
         # Load the existing Chroma collection
         vectorstore = Chroma(
             persist_directory=CHROMA_DIR, 
-            embedding_function=embeddings
+            embedding_function=embeddings,
+            collection_name="amaretis_knowledge" 
         )
         
         # Retrieve the top N most relevant documents

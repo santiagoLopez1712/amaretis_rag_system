@@ -35,7 +35,7 @@ def embed_and_store(chunks):
     # 1. Instanciar el modelo de embeddings
     # Utilizamos un modelo open-source ligero y eficiente
     embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
+         model_name="sentence-transformers/all-mpnet-base-v2"
     )
 
     # 2. Borrar base de datos antigua si existe (DEBE SER LO PRIMERO)
