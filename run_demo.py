@@ -1,46 +1,72 @@
-# rag_agent.py
-
 # 1. Importaciones necesarias
-from langgraph.prebuilt import create_react_agent
-# Clase de LangChain para interactuar con Gemini
-from langchain_google_genai import ChatGoogleGenerativeAI 
-# Importa tus herramientas (estas funciones deben estar definidas en tools.py)
-from tools import get_rag_documents, calculate_budget 
+import os
+# Importar funciones de los otros scripts
+from data_loader import extract_tables_from_directory_to_json
+from data_chunkieren import load_structured_data, chunk_documents, embed_and_store, CHROMA_DIR
+from rag_agent import create_amaretis_rag_agent # Suponiendo que tienes este archivo
+from tools import get_rag_documents # Importa tus herramientas (get_rag_documents, calculate_budget)
+# No necesitas importar calculate_budget aquí, pero asegúrate de que esté en tools.py
 
-# 2. Función principal para crear el agente
-def create_amaretis_rag_agent(debug: bool = False):
-    """
-    Inicializa y devuelve un agente ReAct impulsado por Gemini 2.5 Flash, 
-    equipado con herramientas RAG.
-    """
-    try:
-        # Define el LLM (Gemini 2.5 Flash)
-        # Asegúrate de que la variable de entorno GOOGLE_API_KEY esté configurada.
-        model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash", 
-            temperature=0,
-            # Añadir verbosity para propósitos de debug si es necesario
-            verbose=debug 
-        )
+# Rutas de los archivos
+DATA_DIR = "data"
+JSON_PATH = "structured_data.json"
 
-        # Define la lista de herramientas que el agente puede usar
-        tools = [get_rag_documents, calculate_budget]
-
-        # Crea el Agente ReAct
-        rag_agent = create_react_agent(
-            model=model,
-            tools=tools,
-            prompt="""Eres un asistente financiero RAG experto. 
-            Utiliza la herramienta 'get_rag_documents' para encontrar información en el plan 
-            de marketing antes de responder cualquier pregunta sobre la empresa. 
-            Si el usuario pregunta sobre cálculos financieros o presupuestos, 
-            debes usar la herramienta 'calculate_budget'. Sé conciso y profesional.
-            """,
-        )
+def main():
+    # Establece la API Key. Debe estar en tu entorno.
+    if 'GOOGLE_API_KEY' not in os.environ:
+        print("❌ ERROR: La variable de entorno GOOGLE_API_KEY no está configurada.")
+        return
         
-        return rag_agent
+    print("--- 🚀 Iniciando Ejecución de AMARETIS RAG System ---") 
+    
+    # 1. Extracción de datos
+    print("🔹 1. Extracción de PDFs a JSON...")
+    extract_tables_from_directory_to_json(DATA_DIR, JSON_PATH)
+    
+    # 2. Carga, Chunking y Embeddings (Pasos 2-4)
+    print("🔹 2. Carga de datos estructurados...")
+    documents = load_structured_data(JSON_PATH)
+    print(f"📄 {len(documents)} documentos encontrados.")
 
+    print("🔹 3. Chunking de documentos...")
+    chunks = chunk_documents(documents)
+    print(f"✂️ {len(chunks)} chunks creados.")
+
+    print("🔹 4. Creación de embeddings y almacenamiento en ChromaDB...")
+    embed_and_store(chunks)
+    print(f"✅ Datos embebidos y almacenados en {CHROMA_DIR}.")
+
+    # 5. Inicialización del agente RAG
+    print("🔹 5. Inicialización del agente RAG...")
+    # Asegúrate de que rag_agent.py contenga la función create_amaretis_rag_agent
+    rag_agent = create_amaretis_rag_agent(debug=False) 
+    
+    if not rag_agent:
+        print("❌ Fallo al inicializar el agente RAG. Abortando.")
+        return
+    
+    print("✅ Agente RAG inicializado.")
+
+    # 6. Prueba de consulta al agente RAG
+    print("🔹 6. Prueba de consulta al agente RAG...")
+    # Pregunta de prueba
+    query = "¿Cuál es el presupuesto total de marketing para el proyecto de Bioventure en 2025, según las tablas?"
+    
+    # El agente debe usar la herramienta RAG y potencialmente la de budget
+    try:
+        response = rag_agent.invoke({
+            "input": query,
+            "history": [],  # <-- ¡ESTO RESUELVE EL ERROR!
+        })
+    
+        # La respuesta final en LangGraph ReAct está en la clave 'output'
+        final_response_content = response.get('output', 'No se pudo obtener la respuesta final.')
+    
+        # Imprimir el resultado final
+        print(f"💡 Resultado del agente: {final_response_content}") 
+    
     except Exception as e:
-        print(f"Error al crear el agente Gemini: {e}")
-        print("Asegúrate de tener instalado 'langchain-google-genai' y de que tu GOOGLE_API_KEY esté configurada.")
-        return None
+        print(f"❌ Error al ejecutar la consulta de prueba: {e}")
+
+if __name__ == "__main__":
+    main()
