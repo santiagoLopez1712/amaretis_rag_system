@@ -54,9 +54,6 @@ def embed_and_store(chunks):
         # y la versión 0.5.23 de chromadb no lo necesitan y esto puede causar errores.
         # Si usas la versión más reciente, sí lo necesitas, pero por ahora simplificamos.
     )
-    
-    # 4. Asegurarse de que los datos se guarden en disco
-    db.persist()
 
     print(f"✅ Embeddings creados y guardados en la DB. Total de chunks: {len(chunks)}") 
     
