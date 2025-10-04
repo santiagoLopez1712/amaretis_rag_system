@@ -50,7 +50,7 @@ def main():
     # 6. Prueba de consulta al agente RAG
     print("🔹 6. Prueba de consulta al agente RAG...")
     # Pregunta de prueba
-    query = "¿Cuál es el presupuesto total de marketing para el proyecto de Bioventure en 2025, según las tablas?"
+    query = "¿Cuáles son las acciones a llevarse a cabo en la propuesta de Herne en la fase 2?"
     
     # El agente debe usar la herramienta RAG y potencialmente la de budget
     try:
