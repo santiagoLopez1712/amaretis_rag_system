@@ -104,7 +104,13 @@ try:
     
     graph = StateGraph(TestState)
     print("✅ LangGraph: Funcionando")
-    print(f"   Versión: {langgraph.__version__}")
+    # langgraph no tiene __version__ expuesto, usar importlib
+    try:
+        from importlib.metadata import version
+        lg_version = version('langgraph')
+        print(f"   Versión: {lg_version}")
+    except:
+        print("   Versión: (instalado, versión no disponible)")
 except Exception as e:
     print(f"❌ LangGraph Error: {e}")
 
