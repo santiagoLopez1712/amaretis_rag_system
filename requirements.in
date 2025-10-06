@@ -1,0 +1,36 @@
+# requirements.in
+# Dependencias de alto nivel. `pip-compile` resolverá el resto.
+
+# ===== CORE =====
+python-dotenv
+requests
+
+# ===== DATA PROCESSING =====
+pandas
+matplotlib
+seaborn
+numpy
+
+# ===== PDF =====
+pdfplumber
+
+# ===== LANGCHAIN ECOSYSTEM =====
+# Especificamos los paquetes principales. pip-compile encontrará las
+# versiones compatibles de langchain-core, -text-splitters, etc.
+langchain
+langchain-community
+langgraph
+langchain-google-genai
+langchain-chroma
+langchain-huggingface
+
+# ===== EMBEDDINGS & VECTOR DB =====
+sentence-transformers
+huggingface-hub
+chromadb
+
+# ===== WEB SEARCH =====
+tavily-python
+
+# ===== UI =====
+gradio
