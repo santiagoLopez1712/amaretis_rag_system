@@ -263,7 +263,6 @@ Final Answer: [Deine finale, hilfreiche Antwort]
                 handle_parsing_errors=True,
                 max_iterations=5,
                 max_execution_time=30,
-                early_stopping_method="generate"
             )
             
             executor.name = "marketing_rag_agent"
