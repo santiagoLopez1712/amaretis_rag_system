@@ -1,5 +1,8 @@
 # 1. Importaciones necesarias
 import os
+# Configurar variables de entorno para gRPC (opcional, pero recomendado para evitar demasiados logs)
+os.environ["GRPC_VERBOSITY"] = "ERROR"
+os.environ["GRPC_LOG_SEVERITY_LEVEL"] = "ERROR"
 # Importar funciones de los otros scripts
 from data_loader import extract_tables_from_directory_to_json
 from data_chunkieren import load_structured_data, chunk_documents, embed_and_store, CHROMA_DIR
@@ -50,7 +53,7 @@ def main():
     # 6. Prueba de consulta al agente RAG
     print("🔹 6. Prueba de consulta al agente RAG...")
     # Pregunta de prueba
-    query = "¿Cuáles son las acciones a llevarse a cabo en la propuesta de Herne en la fase 2?"
+    query = "¿Kannst du mir ein ÜBERSICHT der MAßNAHMEN bei der Kampagne von Herne geben?"
     
     # El agente debe usar la herramienta RAG y potencialmente la de budget
     try:
