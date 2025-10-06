@@ -11,16 +11,16 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable 
+from langchain_core.messages import BaseMessage # Añadida para manejo seguro de respuesta de LLM
 from langchain.agents import AgentExecutor
 from langgraph.graph import StateGraph, END 
 
-# --- Importaciones de Agentes (CORREGIDO) ---
+# --- Importaciones de Agentes ---
 from rag_agent import create_amaretis_rag_agent 
 from web_such_agent import research_agent 
 from compliance_agent import ComplianceAgent 
 from data_analysis_agent import agent as data_analysis_agent 
-from brief_generator_agent import BriefGeneratorAgent # Clase confirmada
-# CORRECCIÓN: Importamos la clase real y le damos un alias si es necesario (MarketingPipeline)
+from brief_generator_agent import BriefGeneratorAgent 
 from integrated_marketing_agent import MarketingPipeline as IntegratedMarketingAgent 
 
 # === Configuración de logging ===
@@ -41,42 +41,49 @@ class AgentState(TypedDict):
 class SupervisorManager:
     
     def __init__(self):
+        # NOTA: La inicialización del LLM aquí es solo para el router/supervisor
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
         self.history: List[Dict[str, str]] = []
         
+        # Estas llamadas pueden fallar, deben estar en un bloque try-except en main()
         self.setup_agents()
         self.setup_supervisor()
         
     def setup_agents(self):
         """Inicializa todos los agentes y establece sus nombres."""
         try:
-            # --- 1. RAG Agent Setup (CORREGIDO: Captura el vectorstore) ---
-            # self.rag_agent ahora es el AgentExecutor; self.rag_vectorstore es el vectorstore
+            # --- 1. RAG Agent Setup ---
             self.rag_agent, self.rag_vectorstore = create_amaretis_rag_agent(debug=False) 
             
             if not self.rag_agent:
-                raise ValueError("Fallo al inicializar rag_agent.")
+                raise ValueError("Fallo al inicializar rag_agent. Verifique rag_agent.py y las dependencias de Chroma.")
             self.rag_agent.name = "rag_agent" 
 
-            # --- 2. Compliance Agent Setup ---
+            # --- 2. Compliance Agent Setup (CORREGIDO: Usando setattr) ---
             self.compliance_checker = ComplianceAgent() 
-            self.compliance_checker.name = "compliance_agent" 
+            if self.compliance_checker is None:
+                raise ValueError("Fallo al inicializar compliance_checker.")
+            setattr(self.compliance_checker, 'name', "compliance_agent") # Línea 63 Corregida
 
-            # --- 3. Brief Generator Agent (CORREGIDO: Usa el vectorstore) ---
+            # --- 3. Brief Generator Agent (CORREGIDO: Usando setattr y vectorstore) ---
             self.brief_generator_agent = BriefGeneratorAgent(
-                vectorstore=self.rag_vectorstore # << USAMOS EL OBJETO OBTENIDO
+                vectorstore=self.rag_vectorstore
             )
-            self.brief_generator_agent.name = "brief_generator_agent"
+            if self.brief_generator_agent is None:
+                raise ValueError("Fallo al inicializar brief_generator_agent.")
+            setattr(self.brief_generator_agent, 'name', "brief_generator_agent") # Línea 69 Corregida
             
-            # --- 4. Integrated Marketing Agent (CORREGIDO: Usa el vectorstore) ---
+            # --- 4. Integrated Marketing Agent (CORREGIDO: Usando setattr y vectorstore) ---
             self.integrated_marketing_agent = IntegratedMarketingAgent(
-                vectorstore=self.rag_vectorstore # << USAMOS EL OBJETO OBTENIDO
+                vectorstore=self.rag_vectorstore
             ) 
-            self.integrated_marketing_agent.name = "integrated_marketing_agent"
+            if self.integrated_marketing_agent is None:
+                raise ValueError("Fallo al inicializar integrated_marketing_agent.")
+            setattr(self.integrated_marketing_agent, 'name', "integrated_marketing_agent") # Línea 75 Corregida
             
-            # --- 5 & 6. Otros Agentes (Asumimos que están pre-inicializados en sus módulos) ---
-            if not hasattr(research_agent, 'name'): research_agent.name = "research_agent"
-            if not hasattr(data_analysis_agent, 'name'): data_analysis_agent.name = "data_analysis_agent"
+            # --- 5 & 6. Otros Agentes ---
+            if not hasattr(research_agent, 'name'): setattr(research_agent, 'name', "research_agent")
+            if not hasattr(data_analysis_agent, 'name'): setattr(data_analysis_agent, 'name', "data_analysis_agent")
             
             self.agent_names = [
                 "rag_agent", "research_agent", "data_analysis_agent", 
@@ -99,6 +106,7 @@ class SupervisorManager:
             agent_name = getattr(agent_executor, 'name', 'unknown_agent')
 
             try:
+                # Los agentes tienen que recibir un dict con clave 'input'
                 result = agent_executor.invoke({"input": user_input})
                 
                 if isinstance(result, dict) and 'output' in result:
@@ -113,6 +121,7 @@ class SupervisorManager:
                 logger.error(f"Error durante la ejecución del agente {agent_name}: {e}")
                 agent_response = f"Fehler in Agent {agent_name}. Die Anfrage konnte nicht verarbeitet werden: {e}"
             
+            # El output debe ser un dict que actualice el estado del grafo
             return {"messages": [
                 {"role": "assistant", "content": agent_response, "name": agent_name}
             ]}
@@ -146,8 +155,15 @@ class SupervisorManager:
         
         try:
             messages = route_prompt.format_messages()
-            response = self.llm.invoke(messages).content.strip().lower() 
-            selected_agent = next((name for name in self.agent_names if name.lower() in response), 'rag_agent')
+            llm_response = self.llm.invoke(messages)
+            
+            # --- LÍNEA 149 CORREGIDA: Manejo seguro de la respuesta ---
+            if isinstance(llm_response, BaseMessage):
+                 response_content = llm_response.content.strip().lower()
+            else:
+                 response_content = str(llm_response).strip().lower()
+
+            selected_agent = next((name for name in self.agent_names if name.lower() in response_content), 'rag_agent')
             
             logger.info(f"Router seleccionado: {selected_agent}")
             return selected_agent
@@ -177,7 +193,8 @@ class SupervisorManager:
         # 4. Definir Transiciones Condicionales (Edges)
         route_map = {name: name for name in self.agent_names}
         
-        workflow.add_conditional_edges("router", self.route_question, route_map)
+        # Línea 180: Es correcta si setup_agents y setup_supervisor no fallan antes
+        workflow.add_conditional_edges("router", self.route_question, route_map) 
         
         # Transición desde los agentes al final
         for name in self.agent_names:
@@ -186,13 +203,15 @@ class SupervisorManager:
         # 5. Compilar el Grafo
         self.supervisor = workflow.compile()
     
-    # --- Métodos de utilidad (Mantener process_question, log, etc. del código completo) ---
+    # --- Métodos de utilidad (process_question, log, etc.) ---
 
     def process_question(self, user_input: str) -> Tuple[str, str]:
         """Procesa una pregunta usando el LangGraph Supervisor"""
         try:
             initial_state = {"messages": [{"role": "user", "content": user_input, "name": "user"}]}
-            result = self.supervisor.invoke(initial_state)
+            
+            # Línea 195: Es correcta si self.supervisor está compilado (depende de L180)
+            result = self.supervisor.invoke(initial_state) 
             
             if isinstance(result, dict) and "messages" in result:
                 last_message = result["messages"][-1]

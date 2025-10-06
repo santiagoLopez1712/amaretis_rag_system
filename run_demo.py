@@ -42,7 +42,7 @@ def main():
     # 5. Inicialización del agente RAG
     print("🔹 5. Inicialización del agente RAG...")
     # Asegúrate de que rag_agent.py contenga la función create_amaretis_rag_agent
-    rag_agent = create_amaretis_rag_agent(debug=False) 
+    rag_agent = create_amaretis_rag_agent(debug=True) # Pasa debug=True para más detalles
     
     if not rag_agent:
         print("❌ Fallo al inicializar el agente RAG. Abortando.")
@@ -53,7 +53,7 @@ def main():
     # 6. Prueba de consulta al agente RAG
     print("🔹 6. Prueba de consulta al agente RAG...")
     # Pregunta de prueba
-    query = "¿Cuál es el presupuesto total de marketing para el proyecto de Bioventure en 2025, según las tablas?"
+    query = "Welche Positionen sind in der Tabelle 'Marketing-Budget 2025' für Bioventure auf Seite 57 aufgeführt?"
     
     # El agente debe usar la herramienta RAG y potencialmente la de budget
     try:
@@ -66,6 +66,7 @@ def main():
         final_response_content = response.get('output', 'No se pudo obtener la respuesta final.')
     
         # Imprimir el resultado final
+        print(query)
         print(f"💡 Resultado del agente: {final_response_content}") 
     
     except Exception as e:

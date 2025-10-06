@@ -1,3 +1,4 @@
+# rag_agent.py
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_chroma import Chroma
@@ -5,7 +6,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.agents import Tool, AgentExecutor, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate
-from typing import Optional, List
+from typing import Optional, List, Tuple, Any # << IMPORTACIÓN DE TUPLE Y ANY AÑADIDA
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
@@ -208,27 +209,23 @@ Deine Expertise umfasst:
 - Branchenspezifische Insights
 
 WICHTIGE REGELN:
-1. Nutze **get_rag_documents** für alle Fragen zu: # <--- ¡CORREGIDO!
+1. Nutze **document_search** für alle Fragen zu: 
     - Vergangenen Kampagnen und Projekten
     - Kunden- oder branchenspezifischen Informationen
     - Best Practices und bewährten Strategien
     - Konkreten Daten und Fallstudien
     
-2. Nutze **calculate_budget** nur für: # <--- ¡CORREGIDO!
-    - Die Auswertung finanzieller Daten, die aus Dokumenten gewonnen wurden.
-    - Summenbildung oder Budgetkalkulation basierend auf bereitgestellten Zahlen.
-
-3. Nutze **general_chat** nur für:
-    - Begrüßungen und Smalltalk  
-    - Allgemeine Marketingberatung ohne Dokumentenbezug
-    - Erklärungen von Konzepten
-    - Kreative Brainstorming-Anfragen
+2. Nutze **general_chat** nur für:
+    - Begrüßungen und Smalltalk  
+    - Allgemeine Marketingberatung ohne Dokumentenbezug
+    - Erklärungen von Konzepten
+    - Kreative Brainstorming-Anfragen
     
 3. Antworte immer:
     - Professionell aber zugänglich
     - Mit konkreten, umsetzbaren Empfehlungen
     - **VERWENDE Spanisch, wenn die Frage des Benutzers auf Spanisch ist, und Deutsch, 
-      wenn die Frage auf Deutsch ist (oder wenn du nur deutsche Quellen zitierst).** # <--- ¡MEJORA!
+      wenn die Frage auf Deutsch ist (oder wenn du nur deutsche Quellen zitierst).**
     - Mit Verweis auf relevante Quellen wenn verfügbar
     - Im Kontext der deutschen Marketinglandschaft
 
@@ -278,7 +275,8 @@ Final Answer: [Deine finale, hilfreiche Antwort]
             logger.error(f"Error creando agente: {e}")
             return None
     
-    def initialize_complete_agent(self) -> Optional[AgentExecutor]:
+    # <<< MÉTODO CORREGIDO PARA DEVOLVER VECTORSTORE Y AGENTE >>>
+    def initialize_complete_agent(self) -> Tuple[Optional[AgentExecutor], Optional[Chroma]]:
         logger.info("Inicializando RAG Agent completo...")
         
         self.vectorstore = self.load_existing_vectorstore()
@@ -286,7 +284,8 @@ Final Answer: [Deine finale, hilfreiche Antwort]
         
         if not self.tools:
             logger.error("No se pudieron configurar las herramientas")
-            return None
+            # Devolver None para el AgentExecutor, pero el vectorstore (si existe)
+            return None, self.vectorstore 
         
         self.agent = self.create_marketing_agent(self.tools)
         
@@ -295,7 +294,8 @@ Final Answer: [Deine finale, hilfreiche Antwort]
         else:
             logger.error("Error inicializando RAG Agent")
             
-        return self.agent
+        # RETORNO FINAL: Agente y Vectorstore
+        return self.agent, self.vectorstore
 
 # === Funciones de compatibilidad hacia atrás ===
 def load_existing_vectorstore():
@@ -313,18 +313,21 @@ def create_agent(tools: list):
     rag = RAGAgent()
     return rag.create_marketing_agent(tools)
 
+# <<< FUNCIÓN PRINCIPAL CORREGIDA PARA DEVOLVER VECTORSTORE Y AGENTE >>>
 def create_amaretis_rag_agent(
     collection_name: str = "amaretis_knowledge",
     persist_directory: str = "./chroma_amaretis_db",
     debug: bool = False
-) -> Optional[AgentExecutor]:
+) -> Tuple[Optional[AgentExecutor], Optional[Chroma]]:
     try:
         rag = RAGAgent(
             collection_name=collection_name,
             persist_directory=persist_directory,
             debug=debug
         )
-        return rag.initialize_complete_agent()
+        # Llama al método corregido que devuelve la tupla
+        return rag.initialize_complete_agent() 
     except Exception as e:
         logger.error(f"Error creando agente AMARETIS: {e}")
-        return None
+        # En caso de error fatal, devuelve None para ambos
+        return None, None
