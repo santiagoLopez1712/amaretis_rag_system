@@ -1,4 +1,4 @@
-# supervisor.py (Versión final, robusta y sin advertencias del editor)
+# supervisor.py 
 
 import os
 import re

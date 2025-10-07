@@ -1,4 +1,4 @@
-# brief_generator_agent.py Versión corregida y refactorizada
+# brief_generator_agent.py 
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import Tool, AgentExecutor, create_react_agent
