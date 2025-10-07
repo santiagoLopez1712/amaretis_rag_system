@@ -1,4 +1,4 @@
-# rag_agent.py (Versión con búsqueda RAG mejorada)
+# rag_agent.py 
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_chroma import Chroma
