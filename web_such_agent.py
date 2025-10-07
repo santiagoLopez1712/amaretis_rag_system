@@ -1,4 +1,4 @@
-# web_such_agent.py 
+# web_such_agent.py (Versión con el prompt corregido)
 
 import os
 import logging
@@ -19,13 +19,11 @@ class WebSearchAgent:
     Agente especializado en realizar búsquedas web en tiempo real para obtener
     información actual, noticias y tendencias de mercado.
     """
-    # Nombre estándar para el supervisor
     name = "research_agent"
 
     def __init__(self, temperature: float = 0.7):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=temperature)
+        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=temperature)
         self.tools = self._setup_tools()
-        # El AgentExecutor es la lógica principal del agente
         self.agent: AgentExecutor = self._create_agent()
 
     def _tool_web_search(self, query: str) -> str:
@@ -37,7 +35,6 @@ class WebSearchAgent:
             if not results:
                 return "Keine aktuellen Suchergebnisse gefunden."
 
-            # Formatear los resultados de manera clara para el LLM
             formatted_results = "\n\n".join([
                 f"Titel: {r.get('title')}\nInhalt: {r.get('content')}\nQuelle: {r.get('url')}"
                 for r in results
@@ -60,18 +57,39 @@ class WebSearchAgent:
 
     def _create_agent(self) -> AgentExecutor:
         """Crea el AgentExecutor interno."""
+        # --- CORRECCIÓN AQUÍ ---
+        # El prompt ahora incluye los placeholders {tools} y {tool_names}
         prompt = PromptTemplate.from_template(
             """
             Du bist ein Recherche-Agent für AMARETIS Marketing. Deine Aufgabe ist es, externe Informationen und Trends zu finden.
-
+            
             ANWEISUNGEN:
             - Nutze IMMER das Tool 'web_search_tool', um externe und aktuelle Informationen zu finden.
             - Analysiere die Suchergebnisse und fasse sie präzise zusammen.
             - Helfe NUR bei recherche-bezogenen Aufgaben (Markttrends, neue Technologien, allgemeine Informationen).
             - Antworte DIREKT mit den Ergebnissen deiner Arbeit.
 
+            VERFÜGBARE TOOLS:
+            {tools}
+
+            TOOL-NAMEN:
+            {tool_names}
+
+            NUTZE DAS FOLGENDE FORMAT:
+            Frage: die ursprüngliche Frage des Benutzers
+            Gedanke: Deine Analyse der Frage und Entscheidung, welches Tool du nutzen musst.
+            Aktion: Der Name des zu nutzenden Tools (aus [{tool_names}])
+            Aktionseingabe: Die Eingabe für das Tool.
+            Beobachtung: Das Ergebnis des Tools.
+            ... (dieser Gedanke/Aktion/Aktionseingabe/Beobachtung kann sich wiederholen)
+            Gedanke: Ich habe jetzt die endgültige Antwort.
+            Endgültige Antwort: die finale Antwort auf die ursprüngliche Frage.
+
+            BEGINN!
+
             Frage des Benutzers: {input}
-            Bisherige Schritte: {agent_scratchpad}
+            Gedankengang:
+            {agent_scratchpad}
             """
         )
 
@@ -89,7 +107,6 @@ class WebSearchAgent:
             max_iterations=4,
         )
 
-    # 🌟🌟🌟 MÉTODO CLAVE PARA COMPATIBILIDAD CON LANGGRAPH 🌟🌟🌟
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Punto de entrada estándar para LangGraph."""
         user_input = input_dict.get("input", "")
@@ -105,8 +122,6 @@ class WebSearchAgent:
             return {"output": f"Fehler bei der Web-Recherche: {e}"}
 
 # --- Exportación para el Supervisor ---
-# El supervisor ahora importará esta variable, que es una instancia de la clase.
-# Esto hace que sea consistente con data_analysis_agent.
 research_agent = WebSearchAgent()
 
 # --- Bloque de prueba para ejecución directa del archivo ---
@@ -114,7 +129,6 @@ if __name__ == "__main__":
     print("🔍 Web Search Agent Test")
     question = "Was sind aktuelle Marketing-Trends 2025?"
     
-    # Usamos la instancia 'research_agent' directamente
     response_dict = research_agent.invoke({"input": question})
     
     print(f"\nAntwort:\n{response_dict.get('output')}")

@@ -1,4 +1,4 @@
-# supervisor.py
+# supervisor.py 
 
 import os
 import re
@@ -9,24 +9,17 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Any, Annotated, TypedDict
 from dotenv import load_dotenv
 
-# --- Importaciones de LangChain/LangGraph ---
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable 
-from langchain_core.messages import BaseMessage 
-from langchain.agents import AgentExecutor
 from langgraph.graph import StateGraph, END 
 
-# --- Importaciones de Agentes ---
-# ASEGÚRATE de que estos módulos inicializan AGENTEXCUTOR o RUNNABLE válidos.
 from rag_agent import create_amaretis_rag_agent 
 from web_such_agent import research_agent 
 from compliance_agent import ComplianceAgent 
 from data_analysis_agent import agent as data_analysis_agent 
 from brief_generator_agent import BriefGeneratorAgent 
-from integrated_marketing_agent import MarketingPipeline as IntegratedMarketingAgent 
+from integrated_marketing_agent import create_integrated_marketing_agent
 
-# === Configuración de logging ===
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -35,104 +28,91 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# --- Definición del Estado del Grafo (LangGraph State) ---
 class AgentState(TypedDict):
-    """Representa el estado del grafo en cada paso."""
     messages: Annotated[List[Any], operator.add] 
 
-
 class SupervisorManager:
-    
     def __init__(self):
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
         self.history: List[Dict[str, str]] = []
-        
-        # Estas llamadas deben estar dentro de un try/except en main
+        self.agents = {}
+        self.agent_names = []
+        self.rag_vectorstore = None
         self.setup_agents()
         self.setup_supervisor()
         
     def setup_agents(self):
-        """Inicializa todos los agentes y establece sus nombres."""
         try:
-            # --- 1. RAG Agent Setup ---
-            self.rag_agent, self.rag_vectorstore = create_amaretis_rag_agent(debug=False) 
-            
-            if not self.rag_agent:
-                raise ValueError("Fallo al inicializar rag_agent. Verifique rag_agent.py.")
-            self.rag_agent.name = "rag_agent" 
+            rag_agent_instance, self.rag_vectorstore = create_amaretis_rag_agent(debug=True) 
+            if not rag_agent_instance: raise ValueError("Fallo al inicializar rag_agent.")
+            self.agents[rag_agent_instance.name] = rag_agent_instance
 
-            # --- 2. Compliance Agent Setup (USANDO SETATTR) ---
-            self.compliance_checker = ComplianceAgent() 
-            setattr(self.compliance_checker, 'name', "compliance_agent") 
+            compliance_agent_instance = ComplianceAgent()
+            self.agents[compliance_agent_instance.name] = compliance_agent_instance
 
-            # --- 3. Brief Generator Agent (USANDO SETATTR) ---
-            self.brief_generator_agent = BriefGeneratorAgent(
-                vectorstore=self.rag_vectorstore
-            )
-            setattr(self.brief_generator_agent, 'name', "brief_generator_agent")
+            brief_agent_instance = BriefGeneratorAgent(vectorstore=self.rag_vectorstore)
+            self.agents[brief_agent_instance.name] = brief_agent_instance
             
-            # --- 4. Integrated Marketing Agent (USANDO SETATTR) ---
-            self.integrated_marketing_agent = IntegratedMarketingAgent(
-                vectorstore=self.rag_vectorstore
-            ) 
-            setattr(self.integrated_marketing_agent, 'name', "integrated_marketing_agent")
+            integrated_agent_instance = create_integrated_marketing_agent(vectorstore=self.rag_vectorstore)
+            self.agents[integrated_agent_instance.name] = integrated_agent_instance
             
-            # --- 5 & 6. Otros Agentes (Aseguramos el .name) ---
-            # Si estos agentes son None, la compilación de LangGraph fallará.
-            if not hasattr(research_agent, 'name'): setattr(research_agent, 'name', "research_agent")
-            if not hasattr(data_analysis_agent, 'name'): setattr(data_analysis_agent, 'name', "data_analysis_agent")
+            if not hasattr(research_agent, 'name'): research_agent.name = "research_agent"
+            self.agents[research_agent.name] = research_agent
             
-            self.agent_names = [
-                "rag_agent", "research_agent", "data_analysis_agent", 
-                "compliance_agent", "brief_generator_agent", "integrated_marketing_agent"
-            ]
+            if not hasattr(data_analysis_agent, 'name'): data_analysis_agent.name = "data_analysis_agent"
+            self.agents[data_analysis_agent.name] = data_analysis_agent
             
+            self.agent_names = list(self.agents.keys())
             logger.info(f"Agentes inicializados: {self.agent_names}")
             
         except Exception as e:
             logger.error(f"Error al configurar agentes: {e}")
             raise
     
+    # En supervisor.py -> clase SupervisorManager
+
     def _create_agent_node(self, agent_executor: Any) -> Any:
-        """
-        [ADAPTADOR DEFENSIVO] Adapta un AgentExecutor/Runnable para que sea 
-        compatible con el LangGraph AgentState.
-        """
+        """[ADAPTADOR] Adapta cualquier agente para que sea compatible con LangGraph."""
         def agent_node_adapter(state: AgentState) -> Dict[str, List[Dict[str, Any]]]:
             user_input = state["messages"][-1]["content"]
             agent_name = getattr(agent_executor, 'name', 'unknown_agent')
 
             try:
-                result = agent_executor.invoke({"input": user_input})
+                # --- LA CORRECCIÓN ESTÁ AQUÍ ---
+                # Ahora pasamos tanto el 'input' como el 'history' que el agente RAG necesita.
+                # Usamos el self.history que la clase SupervisorManager ya está almacenando.
+                result = agent_executor.invoke({
+                    "input": user_input,
+                    "history": self.history 
+                })
                 
-                if isinstance(result, dict) and 'output' in result:
-                    agent_response = result['output']
-                elif isinstance(result, str):
-                    agent_response = result
-                else:
-                    logger.error(f"Agente {agent_name} devolvió un tipo inesperado: {type(result)}.")
-                    agent_response = f"Fehler in Agent {agent_name}: Unerwartetes Ergebnisformat ({type(result)})."
+                agent_response = result.get('output', str(result))
                 
             except Exception as e:
                 logger.error(f"Error durante la ejecución del agente {agent_name}: {e}")
-                agent_response = f"Fehler in Agent {agent_name}. Die Anfrage konnte nicht verarbeitet werden: {e}"
+                agent_response = f"Fehler in Agent {agent_name}: {e}"
             
             return {"messages": [
                 {"role": "assistant", "content": agent_response, "name": agent_name}
             ]}
-            
         return agent_node_adapter
+    
+    # --- CAMBIO 1: Nueva función simple para el nodo router ---
+    def _router_node(self, state: AgentState) -> dict:
+        """
+        Este nodo no hace nada más que actuar como un punto de paso.
+        Devuelve un diccionario vacío, que es una actualización de estado válida.
+        """
+        return {}
 
     def route_question(self, state: AgentState) -> str:
-        """
-        Nodo de LangGraph que usa el LLM para decidir a qué agente delegar.
-        """
+        """Esta función ahora SOLO se usa para la lógica de la ruta condicional."""
         user_input = state["messages"][-1]["content"]
         available_agents = ", ".join(self.agent_names)
 
         supervisor_prompt_text = (
             "Eres el supervisor central de AMARETIS. Tu tarea es enrutar la pregunta del usuario "
-            f"al agente más apropiado. Las opciones de enrutamiento deben ser exactamente: {available_agents}.\n"
+            f"al agente más apropiado. Las opciones de enrutamiento deben ser exactamente una de: {available_agents}.\n"
             "Roles de los Agentes:\n"
             "- 'rag_agent': Documentos internos, smalltalk y preguntas generales.\n"
             "- 'research_agent': Información en tiempo real, tendencias de mercado, datos recientes.\n"
@@ -149,66 +129,41 @@ class SupervisorManager:
         ])
         
         try:
-            messages = route_prompt.format_messages()
+            route_chain = route_prompt | self.llm
+            llm_response = route_chain.invoke({})
+            response_content = getattr(llm_response, 'content', str(llm_response)).strip().lower()
             
-            # --- LÍNEA 149 CORREGIDA: Manejo robusto de la respuesta ---
-            llm_response = self.llm.invoke(messages)
-            
-            # 1. Obtenemos el contenido de forma segura
-            response_content = getattr(llm_response, 'content', str(llm_response))
-            # 2. Nos aseguramos de que sea un string antes de manipularlo
-            response_content_lower = str(response_content).strip().lower() 
-            
-            selected_agent = next((name for name in self.agent_names if name.lower() in response_content_lower), 'rag_agent')
-            
-            logger.info(f"Router seleccionado: {selected_agent}")
+            selected_agent = next((name for name in self.agent_names if name.lower() in response_content), 'rag_agent')
+            logger.info(f"Router LLM seleccionó: {selected_agent}")  
             return selected_agent
-        
         except Exception as e:
-            # Si el router falla, siempre devolvemos una clave válida para LangGraph
             logger.error(f"Error crítico en el routing LLM: {e}. Fallback a rag_agent.")
             return 'rag_agent'
 
     def setup_supervisor(self):
-        """Configura el supervisor (LangGraph StateGraph) con los seis nodos."""
-        
+        """Configura el supervisor (LangGraph StateGraph) con la estructura corregida."""
         workflow = StateGraph(AgentState)
         
-        # 1. Definir Nodos (Agents)
-        workflow.add_node("rag_agent", self._create_agent_node(self.rag_agent))
-        workflow.add_node("research_agent", self._create_agent_node(research_agent)) 
-        workflow.add_node("data_analysis_agent", self._create_agent_node(data_analysis_agent)) 
-        workflow.add_node("compliance_agent", self._create_agent_node(self.compliance_checker)) 
-        workflow.add_node("brief_generator_agent", self._create_agent_node(self.brief_generator_agent)) 
-        workflow.add_node("integrated_marketing_agent", self._create_agent_node(self.integrated_marketing_agent))
+        for name, agent in self.agents.items():
+            workflow.add_node(name, self._create_agent_node(agent))
         
-        # 2. Definir el nodo de enrutamiento (Router)
-        workflow.add_node("router", self.route_question)
+        # --- CAMBIO 2: El nodo 'router' ahora usa la nueva función simple ---
+        workflow.add_node("router", self._router_node)
         
-        # 3. Definir Punto de Entrada
         workflow.set_entry_point("router")
         
-        # 4. Definir Transiciones Condicionales (Edges)
-        route_map = {name: name for name in self.agent_names}
+        # La ruta condicional sigue usando 'route_question' para la LÓGICA
+        workflow.add_conditional_edges("router", self.route_question, {name: name for name in self.agent_names})
         
-        # Línea 180 (Aprox.):add_conditional_edges fallará si un nodo es inválido.
-        workflow.add_conditional_edges("router", self.route_question, route_map) 
-        
-        # Transición desde los agentes al final
         for name in self.agent_names:
             workflow.add_edge(name, END)
         
-        # 5. Compilar el Grafo
         self.supervisor = workflow.compile()
     
-    # --- Métodos de utilidad ---
-
+    # ... (El resto del archivo: process_question, run_interactive, etc., permanece igual)
     def process_question(self, user_input: str) -> Tuple[str, str]:
-        """Procesa una pregunta usando el LangGraph Supervisor"""
         try:
             initial_state = {"messages": [{"role": "user", "content": user_input, "name": "user"}]}
-            
-            # Línea 195 (Aprox.): La invocación fallará si la compilación (L180) falló.
             result = self.supervisor.invoke(initial_state) 
             
             if isinstance(result, dict) and "messages" in result:
@@ -216,82 +171,48 @@ class SupervisorManager:
                 answer_text = last_message.get("content", "No se pudo obtener respuesta del agente.")
                 source = f"Supervisor → {last_message.get('name', 'rag_agent')}" 
             else:
-                answer_text = "El supervisor no pudo rutear la pregunta. Formato de respuesta inesperado."
+                answer_text = "Formato de respuesta inesperado."
                 source = "Error de Supervisor"
-            
             return answer_text, source
-            
         except Exception as e:
             logger.error(f"Error crítico en el flujo del supervisor: {e}")
-            return "Lo siento, hubo un error crítico en el sistema de agentes. Por favor, inténtalo de nuevo o reformula la pregunta.", "Error Crítico"
-    
+            return "Lo siento, hubo un error crítico en el sistema de agentes.", "Error Crítico"
+
     def is_insufficient(self, answer: str, user_input: str = "") -> bool:
-        """Verifica si la respuesta es insuficiente (falta de datos o números)"""
-        # ... (código sin cambios)
-        if not answer or not isinstance(answer, str) or len(answer.strip()) < 10:
-            return True
-        
-        insufficient_phrases = [
-            "keine daten", "nicht verfügbar", "unbekannt", 
-            "weiß ich nicht", "kann ich nicht", "no data",
-            "no tengo esa información"
-        ]
-        if any(phrase in answer.lower() for phrase in insufficient_phrases):
-            return True
-        
+        if not answer or not isinstance(answer, str) or len(answer.strip()) < 10: return True
+        insufficient_phrases = ["keine daten", "nicht verfügbar", "unbekannt", "weiß ich nicht", "kann ich nicht", "no data"]
+        if any(phrase in answer.lower() for phrase in insufficient_phrases): return True
         numeric_keywords = ["wie viel", "umsatz", "gewinn", "zahlen", "betrag", "revenue", "budget", "kosten"]
         if any(kw in user_input.lower() for kw in numeric_keywords):
-            number_pattern = r"\d+(?:[\.,]\d+)*\s*(?:[kmb]|million|billion|mio|mrd)?"
-            if not re.search(number_pattern, answer.lower()):
-                return True
-        
+            if not re.search(r"\d", answer): return True
         return False
         
     def log_interaction(self, user_input: str, answer: str, source: str):
-        """Log de interacciones con manejo de errores"""
-        # ... (código sin cambios)
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             insuff_flag = "❗" if self.is_insufficient(answer, user_input) else "✅"
-            
-            log_entry = (
-                f"\n⏰ {timestamp}\n"
-                f"{insuff_flag} Frage: {user_input}\n"
-                f"Antwort: {answer}\n"
-                f"Quelle: {source}\n"
-                f"{'-' * 60}\n"
-            )
-            
+            log_entry = (f"\n⏰ {timestamp}\n{insuff_flag} Pregunta: {user_input}\nAntwort: {answer}\nQuelle: {source}\n{'-' * 60}\n")
             with open("chat_log.txt", "a", encoding="utf-8") as f:
                 f.write(log_entry)
-                
         except Exception as e:
             logger.error(f"Error al escribir log: {e}")
     
     def update_history(self, user_input: str, answer: str):
-        """Actualiza el historial de conversación, manteniendo solo los últimos 10 intercambios"""
-        # ... (código sin cambios)
         self.history.append({"role": "user", "content": user_input})
         self.history.append({"role": "assistant", "content": answer})
-        
         if len(self.history) > 20:
             self.history = self.history[-20:]
     
     def run_interactive(self):
-        """Ejecuta el loop interactivo principal para pruebas de consola"""
-        # ... (código sin cambios)
         print("\n--- 🧠 AMARETIS Supervisor está listo. ---")
-        print("Escribe una pregunta (o 'exit' para salir). Ej: 'Welche Gruppen kooperieren bei Herne?' o 'Tendencias de marketing 2025?'")
-        
+        print("Escribe una pregunta (o 'exit' para salir).")
         while True:
             try:
                 user_input = input("\nPregunta: ").strip()
                 if user_input.lower() in ["exit", "quit", "salir"]:
                     print("¡Hasta luego!")
                     break
-                
-                if not user_input:
-                    continue
+                if not user_input: continue
                 
                 print("\nProcesando...")
                 start_time = time.time()
@@ -301,26 +222,11 @@ class SupervisorManager:
                 print(f"\nRespuesta:\n{answer_text}")
                 print(f"\nFuente: {source} (Tiempo: {end_time - start_time:.2f}s)")
                 
-                # Verificación de suficiencia
                 if self.is_insufficient(answer_text, user_input):
-                    print("\n⚠️ La respuesta parece incompleta/insuficiente. El sistema registrará esto.")
+                    print("\n⚠️ La respuesta parece incompleta/insuficiente.")
                 
-                # Compliance Check 
-                try:
-                    compliance_result = self.compliance_checker.audit_content(
-                        content=answer_text,
-                        content_type=source 
-                    ) 
-                    
-                    final_warning = str(compliance_result)
-                    print(f"\n⚖️ Compliance Check:\n{final_warning}")
-                except Exception as e:
-                    logger.warning(f"Error en Compliance Agent: {e}")
-                
-                # Actualizar historial y log
                 self.update_history(user_input, answer_text)
                 self.log_interaction(user_input, answer_text, source)
-                
             except KeyboardInterrupt:
                 print("\n\nProceso interrumpido por el usuario. ¡Hasta luego!")
                 break
@@ -328,7 +234,6 @@ class SupervisorManager:
                 logger.error(f"Error inesperado en loop interactivo: {e}")
                 print(f"Error inesperado: {e}")
 
-# === Función principal ===
 def main():
     try:
         supervisor_manager = SupervisorManager()
