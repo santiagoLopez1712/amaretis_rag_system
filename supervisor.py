@@ -1,4 +1,4 @@
-# supervisor.py 
+# supervisor.py (Versión final, robusta y sin advertencias del editor)
 
 import os
 import re
@@ -6,20 +6,27 @@ import logging
 import time
 import operator
 from datetime import datetime
-from typing import Dict, List, Tuple, Any, Annotated, TypedDict
+from typing import Dict, List, Tuple, Any, Annotated, TypedDict, Optional
+
 from dotenv import load_dotenv
 
+# --- Importaciones de LangChain/LangGraph ---
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import StateGraph, END 
+from langgraph.graph import StateGraph, END
 
-from rag_agent import create_amaretis_rag_agent 
-from web_such_agent import research_agent 
-from compliance_agent import ComplianceAgent 
-from data_analysis_agent import agent as data_analysis_agent 
-from brief_generator_agent import BriefGeneratorAgent 
+# --- 1. CAMBIO DE IMPORTACIÓN: Usamos 'Runnable' que es la clase base universal ---
+from langchain_core.runnables import Runnable
+
+# --- Importaciones de Agentes ---
+from rag_agent import create_amaretis_rag_agent
+from web_such_agent import research_agent
+from compliance_agent import ComplianceAgent
+from data_analysis_agent import agent as data_analysis_agent
+from brief_generator_agent import BriefGeneratorAgent
 from integrated_marketing_agent import create_integrated_marketing_agent
 
+# === Configuración de logging ===
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -28,22 +35,31 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+# --- Definición del Estado del Grafo (LangGraph State) ---
 class AgentState(TypedDict):
-    messages: Annotated[List[Any], operator.add] 
+    """Representa el estado del grafo en cada paso."""
+    messages: Annotated[List[Any], operator.add]
+
 
 class SupervisorManager:
+
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
+        self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=0.7)
         self.history: List[Dict[str, str]] = []
         self.agents = {}
         self.agent_names = []
         self.rag_vectorstore = None
+        
+        # --- 2. CAMBIO DE TIPO: Usamos 'Runnable' para máxima compatibilidad ---
+        self.supervisor: Optional[Runnable] = None
+        
         self.setup_agents()
         self.setup_supervisor()
-        
+
     def setup_agents(self):
+        """Inicializa todos los agentes y establece sus nombres."""
         try:
-            rag_agent_instance, self.rag_vectorstore = create_amaretis_rag_agent(debug=True) 
+            rag_agent_instance, self.rag_vectorstore = create_amaretis_rag_agent(debug=False)
             if not rag_agent_instance: raise ValueError("Fallo al inicializar rag_agent.")
             self.agents[rag_agent_instance.name] = rag_agent_instance
 
@@ -68,45 +84,30 @@ class SupervisorManager:
         except Exception as e:
             logger.error(f"Error al configurar agentes: {e}")
             raise
-    
-    # En supervisor.py -> clase SupervisorManager
 
     def _create_agent_node(self, agent_executor: Any) -> Any:
         """[ADAPTADOR] Adapta cualquier agente para que sea compatible con LangGraph."""
         def agent_node_adapter(state: AgentState) -> Dict[str, List[Dict[str, Any]]]:
             user_input = state["messages"][-1]["content"]
             agent_name = getattr(agent_executor, 'name', 'unknown_agent')
-
             try:
-                # --- LA CORRECCIÓN ESTÁ AQUÍ ---
-                # Ahora pasamos tanto el 'input' como el 'history' que el agente RAG necesita.
-                # Usamos el self.history que la clase SupervisorManager ya está almacenando.
                 result = agent_executor.invoke({
                     "input": user_input,
                     "history": self.history 
                 })
-                
                 agent_response = result.get('output', str(result))
-                
             except Exception as e:
                 logger.error(f"Error durante la ejecución del agente {agent_name}: {e}")
                 agent_response = f"Fehler in Agent {agent_name}: {e}"
-            
-            return {"messages": [
-                {"role": "assistant", "content": agent_response, "name": agent_name}
-            ]}
+            return {"messages": [{"role": "assistant", "content": agent_response, "name": agent_name}]}
         return agent_node_adapter
-    
-    # --- CAMBIO 1: Nueva función simple para el nodo router ---
+
     def _router_node(self, state: AgentState) -> dict:
-        """
-        Este nodo no hace nada más que actuar como un punto de paso.
-        Devuelve un diccionario vacío, que es una actualización de estado válida.
-        """
+        """Nodo de paso que actúa como punto de partida para el enrutamiento."""
         return {}
 
     def route_question(self, state: AgentState) -> str:
-        """Esta función ahora SOLO se usa para la lógica de la ruta condicional."""
+        """Usa el LLM para decidir a qué agente delegar la pregunta."""
         user_input = state["messages"][-1]["content"]
         available_agents = ", ".join(self.agent_names)
 
@@ -132,36 +133,34 @@ class SupervisorManager:
             route_chain = route_prompt | self.llm
             llm_response = route_chain.invoke({})
             response_content = getattr(llm_response, 'content', str(llm_response)).strip().lower()
-            
             selected_agent = next((name for name in self.agent_names if name.lower() in response_content), 'rag_agent')
-            logger.info(f"Router LLM seleccionó: {selected_agent}")  
+            logger.info(f"Router LLM seleccionó: {selected_agent}")
             return selected_agent
         except Exception as e:
             logger.error(f"Error crítico en el routing LLM: {e}. Fallback a rag_agent.")
             return 'rag_agent'
 
     def setup_supervisor(self):
-        """Configura el supervisor (LangGraph StateGraph) con la estructura corregida."""
+        """Configura el supervisor (LangGraph StateGraph)."""
         workflow = StateGraph(AgentState)
         
         for name, agent in self.agents.items():
             workflow.add_node(name, self._create_agent_node(agent))
         
-        # --- CAMBIO 2: El nodo 'router' ahora usa la nueva función simple ---
         workflow.add_node("router", self._router_node)
-        
         workflow.set_entry_point("router")
         
-        # La ruta condicional sigue usando 'route_question' para la LÓGICA
         workflow.add_conditional_edges("router", self.route_question, {name: name for name in self.agent_names})
         
         for name in self.agent_names:
             workflow.add_edge(name, END)
         
         self.supervisor = workflow.compile()
-    
-    # ... (El resto del archivo: process_question, run_interactive, etc., permanece igual)
+
     def process_question(self, user_input: str) -> Tuple[str, str]:
+        """Procesa una pregunta usando el LangGraph Supervisor."""
+        if not self.supervisor:
+            return "Error: El supervisor no está inicializado.", "Error Crítico"
         try:
             initial_state = {"messages": [{"role": "user", "content": user_input, "name": "user"}]}
             result = self.supervisor.invoke(initial_state) 
@@ -179,6 +178,7 @@ class SupervisorManager:
             return "Lo siento, hubo un error crítico en el sistema de agentes.", "Error Crítico"
 
     def is_insufficient(self, answer: str, user_input: str = "") -> bool:
+        """Verifica si la respuesta es insuficiente."""
         if not answer or not isinstance(answer, str) or len(answer.strip()) < 10: return True
         insufficient_phrases = ["keine daten", "nicht verfügbar", "unbekannt", "weiß ich nicht", "kann ich nicht", "no data"]
         if any(phrase in answer.lower() for phrase in insufficient_phrases): return True
@@ -188,6 +188,7 @@ class SupervisorManager:
         return False
         
     def log_interaction(self, user_input: str, answer: str, source: str):
+        """Log de interacciones."""
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             insuff_flag = "❗" if self.is_insufficient(answer, user_input) else "✅"
@@ -198,12 +199,14 @@ class SupervisorManager:
             logger.error(f"Error al escribir log: {e}")
     
     def update_history(self, user_input: str, answer: str):
+        """Actualiza el historial de conversación."""
         self.history.append({"role": "user", "content": user_input})
         self.history.append({"role": "assistant", "content": answer})
         if len(self.history) > 20:
             self.history = self.history[-20:]
     
     def run_interactive(self):
+        """Ejecuta el loop interactivo para pruebas de consola."""
         print("\n--- 🧠 AMARETIS Supervisor está listo. ---")
         print("Escribe una pregunta (o 'exit' para salir).")
         while True:
@@ -239,8 +242,8 @@ def main():
         supervisor_manager = SupervisorManager()
         supervisor_manager.run_interactive()
     except Exception as e:
-        logger.critical(f"Error FATAL al inicializar supervisor: {e}")
-        print(f"\n❌ Error crítico de inicialización. Verifique logs. Error: {e}")
+        logger.critical(f"Error FATAL al inicializar supervisor: {e}", exc_info=True)
+        print(f"\n❌ Error crítico de inicialización. Verifique logs y el Traceback. Error: {e}")
 
 if __name__ == "__main__":
     main()
