@@ -1,5 +1,4 @@
-# rag_agent.py 
-#Testfrage: Welche Positionen sind in der Tabelle 'Marketing-Budget 2025' für Bioventure auf Seite 57 aufgeführt?
+# rag_agent.py (Versión con búsqueda RAG mejorada)
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_chroma import Chroma
@@ -50,7 +49,7 @@ class RAGAgent:
     
     def _safe_llm_invoke(self, query: str) -> str:
         try:
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=self.temperature)
+            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=self.temperature)
             chain = self.llm | StrOutputParser()
             return chain.invoke(f"Antworte natürlich und hilfreich auf: {query}")
         except Exception as e:
@@ -59,8 +58,14 @@ class RAGAgent:
     
     def _create_qa_chain(self, vectorstore: Chroma) -> Optional[RetrievalQA]:
         try:
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=self.temperature)
-            retriever = vectorstore.as_retriever(search_type="similarity_score_threshold", search_kwargs={"k": self.retrieval_k, "score_threshold": 0.5})
+            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=self.temperature)
+            
+            # --- MEJORA DE CALIDAD: Usar 'similarity' para ser menos restrictivo ---
+            retriever = vectorstore.as_retriever(
+                search_type="similarity",
+                search_kwargs={"k": self.retrieval_k}
+            )
+            
             return RetrievalQA.from_chain_type(llm=self.llm, chain_type="stuff", retriever=retriever, verbose=self.debug, return_source_documents=True)
         except Exception as e:
             logger.error(f"Error creando QA chain: {e}")
@@ -69,7 +74,12 @@ class RAGAgent:
     def _safe_qa_invoke(self, qa_chain: RetrievalQA, query: str) -> str:
         try:
             result = qa_chain.invoke({"query": query})
-            return result.get("result", "Keine relevanten Informationen gefunden.") if isinstance(result, dict) else str(result)
+            # Añadimos un chequeo por si la respuesta o los documentos vienen vacíos
+            answer = result.get("result", "")
+            sources = result.get("source_documents", [])
+            if not answer or not sources:
+                return "In der Wissensdatenbank wurden keine relevanten Informationen für diese Anfrage gefunden."
+            return answer
         except Exception as e:
             logger.error(f"Error en QA invoke: {e}")
             return f"Fehler bei der Dokumentensuche: {e}"
@@ -113,6 +123,8 @@ class RAGAgent:
 
             Thought: [Deine Zusammenfassung der gesammelten Informationen und die Formulierung der endgültigen Antwort.]
             Final Answer: [Die finale, umfassende Antwort auf die ursprüngliche Frage des Benutzers.]
+            
+            **WICHTIGE EINSCHRÄNKUNG**: Wenn der Benutzer nach der Erstellung eines Bildes, Fotos oder einer Grafik fragt, antworte immer, dass du Text und Daten analysieren, aber keine Bilder generieren kannst. Du kannst jedoch Konzepte beschreiben, die zur Erstellung eines Bildes verwendet werden können.
 
             **ANFORDERUNG**
             Beginne jetzt! Beantworte die folgende Frage des Benutzers und halte dich strikt an das oben beschriebene Format.
@@ -122,7 +134,7 @@ class RAGAgent:
             Dein Gedankengang:
             {agent_scratchpad}""")
 
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=self.temperature)
+            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=self.temperature)
             agent = create_react_agent(llm=self.llm, tools=tools, prompt=prompt)
             executor = AgentExecutor(agent=agent, tools=tools, verbose=self.debug, handle_parsing_errors=True, max_iterations=5, max_execution_time=30)
             executor.name = "rag_agent"
