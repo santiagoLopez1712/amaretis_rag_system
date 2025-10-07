@@ -22,7 +22,7 @@ class WebSearchAgent:
     name = "research_agent"
 
     def __init__(self, temperature: float = 0.7):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=temperature)
+        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=temperature)
         self.tools = self._setup_tools()
         self.agent: AgentExecutor = self._create_agent()
 

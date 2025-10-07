@@ -49,7 +49,7 @@ class RAGAgent:
     
     def _safe_llm_invoke(self, query: str) -> str:
         try:
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=self.temperature)
+            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=self.temperature)
             chain = self.llm | StrOutputParser()
             return chain.invoke(f"Antworte natürlich und hilfreich auf: {query}")
         except Exception as e:
@@ -58,7 +58,7 @@ class RAGAgent:
     
     def _create_qa_chain(self, vectorstore: Chroma) -> Optional[RetrievalQA]:
         try:
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=self.temperature)
+            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=self.temperature)
             
             # --- MEJORA DE CALIDAD: Usar 'similarity' para ser menos restrictivo ---
             retriever = vectorstore.as_retriever(
@@ -134,7 +134,7 @@ class RAGAgent:
             Dein Gedankengang:
             {agent_scratchpad}""")
 
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=self.temperature)
+            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=self.temperature)
             agent = create_react_agent(llm=self.llm, tools=tools, prompt=prompt)
             executor = AgentExecutor(agent=agent, tools=tools, verbose=self.debug, handle_parsing_errors=True, max_iterations=5, max_execution_time=30)
             executor.name = "rag_agent"

@@ -14,7 +14,7 @@ class BriefGeneratorAgent:
     name = "brief_generator_agent"
     
     def __init__(self, vectorstore, temperature: float = 0.7):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=temperature)
+        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=temperature)
         self.vectorstore = vectorstore
         self.tools = self._setup_tools()
         self.agent = self._create_agent()
