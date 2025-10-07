@@ -6,14 +6,23 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from smolagents import InferenceClientModel, CodeAgent 
 from dotenv import load_dotenv
-from langchain_core.runnables import RunnableLambda # <--- NEUER IMPORT
-from typing import Dict, Any
-import re # Notwendig für die Beispiel-Funktion
+# from langchain_core.runnables import RunnableLambda # <--- Ya no es necesario
+from typing import Dict, Any, List
 
 # 🔑 HuggingFace-Token laden und anmelden
 load_dotenv()
 
+# 📓 Zusätzliche Notizen (z.B. Beschreibung der Spalten)
+additional_notes = """
+### Variablenbeschreibung:
+- 'company': Name des Unternehmens
+- 'concept': Finanzkennzahl (z.B. Umsatz, Ausgaben, Eigenkapital)
+- Spalten im Format '2024-03-31': stellen Quartalsdaten dar
+- Diese Datei enthält Finanzergebnisse verschiedener Unternehmen über mehrere Quartale hinweg.
+"""
+
 # 🧠 LLM-Modell mit Inference API initialisieren
+# Nota: La librería smolagents maneja internamente la autenticación si HF_TOKEN está en .env
 model = InferenceClientModel("meta-llama/Llama-3.1-70B-Instruct")
 
 # 🤖 Interne smolagents-Instanz definieren
@@ -27,66 +36,71 @@ smol_agent_instance = CodeAgent(
         "seaborn"
     ]
 )
-smol_agent_instance.name = "data_analysis_agent"
+# smol_agent_instance.name = "data_analysis_agent" # El nombre se define en la clase wrapper
 
 # 📁 Sicherstellen, dass der Ausgabeordner existiert
 os.makedirs("figures", exist_ok=True)
 
-# 📓 Zusätzliche Notizen (z.B. Beschreibung der Spalten)
-additional_notes = """
-### Variablenbeschreibung:
-- 'company': Name des Unternehmens
-- 'concept': Finanzkennzahl (z.B. Umsatz, Ausgaben, Eigenkapital)
-- Spalten im Format '2024-03-31': stellen Quartalsdaten dar
-- Diese Datei enthält Finanzergebnisse verschiedener Unternehmen über mehrere Quartale hinweg.
-"""
 
-# ⚙️ WRAPPER-FUNKTION: Führt smolagents.run aus
-def smol_agent_runner(input_dict: Dict[str, Any]) -> Dict[str, Any]:
+# ⚙️ WRAPPER-CLASE: Imita la interfaz de AgentExecutor
+# ESTA CLASE ES LA SOLUCIÓN CLAVE para que LangGraph lo compile.
+class DataAnalysisAgentRunnable:
     """
-    Funktion adaptiert den smol_agent für die LangGraph/LangChain AgentState.
+    Clase wrapper que adapta smol_agent_instance para la interfaz
+    Runnable/AgentExecutor, permitiendo su uso en LangGraph.
     """
-    # LangChain/LangGraph AgentExecutor sendet die Eingabe unter der 'input'-Key
-    user_prompt = input_dict.get("input", "")
+    def __init__(self, smol_agent: CodeAgent, notes: str):
+        self.smol_agent = smol_agent
+        self.additional_notes = notes
+        # Definición del nombre para el supervisor
+        self.name = "data_analysis_agent" 
 
-    if not user_prompt:
-        return {"output": "Fehler: Keine Eingabe im Diktat gefunden."}
+    # Método clave que LangChain/LangGraph invoca
+    def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Función adaptada para LangChain/LangGraph AgentState, recibe {'input': str}
+        y devuelve {'output': str}.
+        """
+        user_prompt = input_dict.get("input", "")
 
-    # Ausführung des smolagents.CodeAgent mit der internen Methode .run()
-    antwort = smol_agent_instance.run(
-        user_prompt,
-        additional_args={
-            "source_file": "all_company_financials.csv",
-            "additional_notes": additional_notes
-        }
-    )
-    
-    # Rückgabe des Ergebnisses im LangChain-AgentExecutor-Format (mit 'output')
-    return {"output": antwort}
+        if not user_prompt:
+            return {"output": "Fehler: Keine Eingabe im Diktat gefunden."}
 
-# 🚀 Exportieren Sie die LangChain RunnableLambda-Instanz, die der Supervisor erwartet
-agent = RunnableLambda(smol_agent_runner)
-agent.name = "data_analysis_agent" 
+        # Ausführung des smolagents.CodeAgent mit der internen Methode .run()
+        try:
+            # La invocación del agente es directa al método .run() de smolagents
+            antwort = self.smol_agent.run(
+                user_prompt,
+                additional_args={
+                    "source_file": "all_company_financials.csv",
+                    "additional_notes": self.additional_notes
+                }
+            )
+        except Exception as e:
+            return {"output": f"Fehler bei der smolagents-Ausführung: {e}"}
+        
+        # Rückgabe del resultado en el formato de AgentExecutor/LangGraph
+        return {"output": antwort}
 
+# 🚀 Exportar la instancia de la Clase Wrapper que el Supervisor espera
+# El objeto 'agent' es ahora una instancia de la clase wrapper
+agent = DataAnalysisAgentRunnable(smol_agent=smol_agent_instance, notes=additional_notes) 
+
+
+# --- La función generate_apple_profit_plot() no es relevante para el Supervisor ---
 def generate_apple_profit_plot():
     """Erstellt ein Diagramm für den Gewinn von Apple in den letzten 3 Jahren aus all_company_financials.csv und speichert es unter figures/apple_profit_last3years.png. Gibt den Bildpfad zurück."""
     # ... (Ihre Implementierung bleibt hier erhalten)
     return "figures/apple_profit_last3years.png" # Platzhalter
 
 if __name__ == "__main__":
-    # 📣 Benutzerinteraktion – Eingabeaufforderung
-    print("🔍 Bitte gib deinen Analyseauftrag ein (z.B. 'Vergleiche die Verbindlichkeiten von Apple und Microsoft im Jahr 2024.'):\n")
+    # Test de Consola
+    print("🔍 Data Analysis Agent Test")
+    print("Bitte gib deinen Analyseauftrag ein (z.B. 'Vergleiche die Verbindlichkeiten von Apple und Microsoft im Jahr 2024.'):\n")
     user_prompt = input("> ")
 
-    # 🏃 Hier verwenden wir weiterhin die smol_agent_instance für die direkte Konsolen-Ausführung
-    antwort = smol_agent_instance.run(
-        user_prompt,
-        additional_args={
-            "source_file": "all_company_financials.csv",
-            "additional_notes": additional_notes
-        }
-    )
+    # Usamos el wrapper 'agent' para probar la interfaz del Supervisor
+    respuesta_dict = agent.invoke({"input": user_prompt})
 
-    # 🖨 Ergebnis anzeigen
     print("\n📊 Analyseergebnis:\n")
-    print(antwort)
+    print(respuesta_dict.get("output", "Error al obtener la respuesta."))

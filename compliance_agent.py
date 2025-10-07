@@ -1,4 +1,4 @@
-# compliance_agent.py
+# compliance_agent.py 
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import Tool, AgentExecutor, create_react_agent  
@@ -6,12 +6,18 @@ from langchain_core.prompts import ChatPromptTemplate
 import re
 from datetime import datetime
 from typing import List, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ComplianceAgent:
     """
     Agente especializado en compliance, governance y tratamiento de datos
     para AMARETIS según regulaciones alemanas y europeas
     """
+    
+    # Añadimos 'name' para ser coherentes
+    name = "compliance_agent" 
     
     def __init__(self, temperature: float = 0.3):  # Menor temperatura para compliance
         self.llm = ChatGoogleGenerativeAI(
@@ -21,6 +27,7 @@ class ComplianceAgent:
         self.tools = self._setup_tools()
         self.agent = self._create_agent()
     
+    # ... (El resto de _setup_tools, _get_gdpr_recommendation, etc. sigue igual)
     def _setup_tools(self) -> List[Tool]:
         """Herramientas específicas para compliance"""
         
@@ -97,8 +104,8 @@ class ComplianceAgent:
             report = "⚖️ MARKETING-COMPLIANCE PRÜFUNG:\n\n"
             for issue in issues:
                 report += f"🚨 {issue['type'].upper()} - Risiko: {issue['risk']}\n"
-                report += f"   Gefunden: {', '.join(issue['matches'])}\n"
-                report += f"   Empfehlung: {issue['recommendation']}\n\n"
+                report += f"  Gefunden: {', '.join(issue['matches'])}\n"
+                report += f"  Empfehlung: {issue['recommendation']}\n\n"
             
             return report
         
@@ -222,7 +229,7 @@ Final Answer: [Zusammenfassung + Empfehlungen]
         executor = AgentExecutor(
             agent=agent,
             tools=self.tools,
-            verbose=True,
+            verbose=False, # Optimiert für den LangGraph-Einsatz
             handle_parsing_errors=True,
             max_iterations=5,
             max_execution_time=30
@@ -231,6 +238,30 @@ Final Answer: [Zusammenfassung + Empfehlungen]
         executor.name = "compliance_agent"
         return executor
     
+    # 🌟🌟🌟 MÉTODO CLAVE PARA COMPATIBILIDAD CON LANGGRAPH 🌟🌟🌟
+    def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Método de compatibilidad para LangGraph. 
+        Toma {'input': str} del estado y lo pasa al AgentExecutor interno.
+        Devuelve {'output': str} para el estado.
+        """
+        user_input = input_dict.get("input", "")
+        
+        if not user_input:
+            return {"output": "Error: Eingabe leer für Compliance-Prüfung."}
+            
+        try:
+            # Llama al AgentExecutor interno
+            result = self.agent.invoke({"input": user_input})
+            
+            # Formatear la salida a {'output': str}
+            final_output = result.get("output", str(result))
+            return {"output": final_output}
+            
+        except Exception as e:
+            logger.error(f"Error en la invocación del Compliance Agent: {e}")
+            return {"output": f"Fehler bei Compliance-Prüfung: {e}"}
+
     def audit_content(self, content: str, content_type: str = "marketing") -> str:
         """Führt vollständige Compliance-Prüfung durch"""
         
@@ -248,13 +279,12 @@ Final Answer: [Zusammenfassung + Empfehlungen]
         Gib konkrete, umsetzbare Empfehlungen.
         """
         
-        try:
-            result = self.agent.invoke({"input": audit_request})
-            return result.get("output", result)
-        except Exception as e:
-            return f"Fehler bei Compliance-Prüfung: {e}"
+        # Redirigimos al método invoke para mantener la compatibilidad
+        result_dict = self.invoke({"input": audit_request})
+        return result_dict.get("output", f"Fehler bei Compliance-Prüfung (audit_content): {result_dict}")
 
 # Convenience function
 def create_compliance_agent() -> ComplianceAgent:
     """Erstellt Compliance Agent Instanz"""
+    # Devolvemos la instancia de la CLASE COMPLETA
     return ComplianceAgent()

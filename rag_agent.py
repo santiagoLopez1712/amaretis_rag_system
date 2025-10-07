@@ -6,7 +6,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.agents import Tool, AgentExecutor, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate
-from typing import Optional, List, Tuple, Any # << IMPORTACIÓN DE TUPLE Y ANY AÑADIDA
+from typing import Optional, List, Tuple, Any, Dict # << Dict añadido
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
@@ -21,6 +21,9 @@ class RAGAgent:
     """
     RAG Agent mejorado con manejo de errores y configuración flexible
     """
+    
+    # Añadimos 'name' para ser consistentes con la filosofía de nodos de LangGraph
+    name = "rag_agent"
     
     def __init__(
         self,
@@ -42,7 +45,7 @@ class RAGAgent:
         self.llm = None
         self.vectorstore = None
         self.tools = None
-        self.agent = None
+        self.agent: Optional[AgentExecutor] = None # Tipado para claridad
         
     def load_existing_vectorstore(self) -> Optional[Chroma]:
         try:
@@ -216,7 +219,7 @@ WICHTIGE REGELN:
     - Konkreten Daten und Fallstudien
     
 2. Nutze **general_chat** nur für:
-    - Begrüßungen und Smalltalk  
+    - Begrüßungen und Smalltalk  
     - Allgemeine Marketingberatung ohne Dokumentenbezug
     - Erklärungen von Konzepten
     - Kreative Brainstorming-Anfragen
@@ -275,6 +278,37 @@ Final Answer: [Deine finale, hilfreiche Antwort]
             logger.error(f"Error creando agente: {e}")
             return None
     
+    # 🌟🌟🌟 MÉTODO CLAVE AÑADIDO PARA COMPATIBILIDAD CON LANGGRAPH 🌟🌟🌟
+    def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Método de compatibilidad para LangGraph. 
+        Delega la llamada al AgentExecutor interno (self.agent).
+        """
+        if not self.agent:
+            # Si el agente aún no está inicializado, lo hacemos ahora
+            self.agent, _ = self.initialize_complete_agent()
+            if not self.agent:
+                 return {"output": "Fehler: RAG Agent konnte nicht initialisiert werden."}
+
+        # El AgentExecutor espera la entrada en la clave 'input'
+        input_data = {
+            "input": input_dict.get("input", "Leere Anfrage."),
+            # La historia se puede pasar desde el estado, si es necesario para el prompt
+            "history": input_dict.get("history", []) 
+        }
+
+        try:
+            # Llamar al AgentExecutor interno
+            result = self.agent.invoke(input_data)
+            
+            # Formatear la salida del AgentExecutor para el estado de LangGraph
+            final_output = result.get("output", str(result))
+            
+            return {"output": final_output}
+        except Exception as e:
+            logger.error(f"Fehler bei RAG Agent Invoke: {e}")
+            return {"output": f"Technischer Fehler im RAG Agenten: {e}"}
+
     # <<< MÉTODO CORREGIDO PARA DEVOLVER VECTORSTORE Y AGENTE >>>
     def initialize_complete_agent(self) -> Tuple[Optional[AgentExecutor], Optional[Chroma]]:
         logger.info("Inicializando RAG Agent completo...")
@@ -295,6 +329,7 @@ Final Answer: [Deine finale, hilfreiche Antwort]
             logger.error("Error inicializando RAG Agent")
             
         # RETORNO FINAL: Agente y Vectorstore
+        # self.agent es un AgentExecutor (Runnable)
         return self.agent, self.vectorstore
 
 # === Funciones de compatibilidad hacia atrás ===
