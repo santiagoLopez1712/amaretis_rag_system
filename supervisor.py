@@ -1,4 +1,4 @@
-# supervisor.py 
+# supervisor.py (Versión final, robusta y completa)
 
 import os
 import re
@@ -6,6 +6,7 @@ import logging
 import time
 import operator
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Tuple, Any, Annotated, TypedDict, Optional
 
 from dotenv import load_dotenv
@@ -14,8 +15,6 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
-
-# --- 1. CAMBIO DE IMPORTACIÓN: Usamos 'Runnable' que es la clase base universal ---
 from langchain_core.runnables import Runnable
 
 # --- Importaciones de Agentes ---
@@ -44,13 +43,13 @@ class AgentState(TypedDict):
 class SupervisorManager:
 
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=0.7)
+        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
         self.history: List[Dict[str, str]] = []
         self.agents = {}
         self.agent_names = []
         self.rag_vectorstore = None
         
-        # --- 2. CAMBIO DE TIPO: Usamos 'Runnable' para máxima compatibilidad ---
+        # Le decimos al editor: "self.supervisor será un Runnable, pero empieza siendo None"
         self.supervisor: Optional[Runnable] = None
         
         self.setup_agents()
@@ -82,7 +81,7 @@ class SupervisorManager:
             logger.info(f"Agentes inicializados: {self.agent_names}")
             
         except Exception as e:
-            logger.error(f"Error al configurar agentes: {e}")
+            logger.error(f"Error al configurar agentes: {e}", exc_info=True)
             raise
 
     def _create_agent_node(self, agent_executor: Any) -> Any:
@@ -157,25 +156,63 @@ class SupervisorManager:
         
         self.supervisor = workflow.compile()
 
-    def process_question(self, user_input: str) -> Tuple[str, str]:
-        """Procesa una pregunta usando el LangGraph Supervisor."""
+    def process_question(self, user_input: str) -> Tuple[str, str, Optional[str]]:
+        """Procesa una pregunta y devuelve: (texto_respuesta, fuente, ruta_de_imagen_opcional)"""
         if not self.supervisor:
-            return "Error: El supervisor no está inicializado.", "Error Crítico"
+            return "Error: El supervisor no está inicializado.", "Error Crítico", None
+
+        image_path: Optional[str] = None
+        
         try:
+            selected_agent = self.route_question({"messages": [{"content": user_input}]})
+
+            if selected_agent == "data_analysis_agent":
+                self._clear_figures_directory()
+
             initial_state = {"messages": [{"role": "user", "content": user_input, "name": "user"}]}
             result = self.supervisor.invoke(initial_state) 
             
             if isinstance(result, dict) and "messages" in result:
                 last_message = result["messages"][-1]
-                answer_text = last_message.get("content", "No se pudo obtener respuesta del agente.")
-                source = f"Supervisor → {last_message.get('name', 'rag_agent')}" 
+                answer_text = last_message.get("content", "No se pudo obtener respuesta.")
+                source = f"Supervisor → {last_message.get('name', 'N/A')}"
+                
+                if selected_agent == "data_analysis_agent":
+                    image_path = self._get_latest_figure()
             else:
                 answer_text = "Formato de respuesta inesperado."
                 source = "Error de Supervisor"
-            return answer_text, source
+            
+            return answer_text, source, image_path
         except Exception as e:
-            logger.error(f"Error crítico en el flujo del supervisor: {e}")
-            return "Lo siento, hubo un error crítico en el sistema de agentes.", "Error Crítico"
+            logger.error(f"Error crítico en el flujo del supervisor: {e}", exc_info=True)
+            return "Lo siento, hubo un error crítico en el sistema de agentes.", "Error Crítico", None
+
+    def _get_latest_figure(self) -> Optional[str]:
+        """Busca la figura más reciente en el directorio 'figures'."""
+        try:
+            figures_path = Path("figures")
+            if not figures_path.exists(): return None
+            figures = list(figures_path.glob("*.png")) + list(figures_path.glob("*.jpg"))
+            if not figures: return None
+            latest_figure = max(figures, key=lambda f: f.stat().st_mtime)
+            logger.info(f"Figura encontrada: {latest_figure}")
+            return str(latest_figure)
+        except Exception as e:
+            logger.error(f"Error buscando la figura más reciente: {e}")
+            return None
+
+    def _clear_figures_directory(self):
+        """Borra los contenidos del directorio 'figures' para evitar mostrar imágenes antiguas."""
+        try:
+            figures_path = Path("figures")
+            if figures_path.exists() and figures_path.is_dir():
+                for item in figures_path.iterdir():
+                    if item.is_file():
+                        item.unlink()
+                logger.info("Directorio 'figures' limpiado.")
+        except Exception as e:
+            logger.error(f"Error limpiando el directorio 'figures': {e}")
 
     def is_insufficient(self, answer: str, user_input: str = "") -> bool:
         """Verifica si la respuesta es insuficiente."""
@@ -219,11 +256,14 @@ class SupervisorManager:
                 
                 print("\nProcesando...")
                 start_time = time.time()
-                answer_text, source = self.process_question(user_input)
+                # El loop ahora maneja los 3 valores de retorno
+                answer_text, source, image_path = self.process_question(user_input)
                 end_time = time.time()
                 
                 print(f"\nRespuesta:\n{answer_text}")
                 print(f"\nFuente: {source} (Tiempo: {end_time - start_time:.2f}s)")
+                if image_path:
+                    print(f"🖼️  Imagen generada en: {image_path}")
                 
                 if self.is_insufficient(answer_text, user_input):
                     print("\n⚠️ La respuesta parece incompleta/insuficiente.")
@@ -234,7 +274,7 @@ class SupervisorManager:
                 print("\n\nProceso interrumpido por el usuario. ¡Hasta luego!")
                 break
             except Exception as e:
-                logger.error(f"Error inesperado en loop interactivo: {e}")
+                logger.error(f"Error inesperado en loop interactivo: {e}", exc_info=True)
                 print(f"Error inesperado: {e}")
 
 def main():
