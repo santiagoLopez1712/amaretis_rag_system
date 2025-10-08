@@ -1,4 +1,4 @@
-# web_such_agent.py (Versión con el prompt corregido)
+# web_such_agent.py (Versión optimizada como "Analista de Inteligencia de Mercado")
 
 import os
 import logging
@@ -11,39 +11,46 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.prompts import PromptTemplate
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class WebSearchAgent:
     """
-    Agente especializado en realizar búsquedas web en tiempo real para obtener
-    información actual, noticias y tendencias de mercado.
+    Agente especializado en realizar búsquedas web, sintetizar la información
+    y citar las fuentes para actuar como un Analista de Inteligencia de Mercado.
     """
     name = "research_agent"
 
     def __init__(self, temperature: float = 0.7):
+        # Usamos el modelo que has especificado. Si da problemas, 'gemini-pro' es una alternativa estable.
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=temperature)
         self.tools = self._setup_tools()
         self.agent: AgentExecutor = self._create_agent()
 
     def _tool_web_search(self, query: str) -> str:
-        """Herramienta que realiza la búsqueda web y formatea los resultados."""
+        """
+        --- OPTIMIZACIÓN 1: Herramienta mejorada ---
+        Realiza la búsqueda y formatea los resultados de manera estructurada para el LLM.
+        """
         try:
-            search = TavilySearchResults(max_results=3)
+            search = TavilySearchResults(max_results=3) # Obtenemos 3 fuentes para sintetizar
             results = search.invoke(query)
             
             if not results:
-                return "Keine aktuellen Suchergebnisse gefunden."
+                return "No se encontraron resultados de búsqueda relevantes para esa consulta."
 
+            # Formateamos los resultados con un índice claro para que el LLM pueda citarlos
             formatted_results = "\n\n".join([
-                f"Titel: {r.get('title')}\nInhalt: {r.get('content')}\nQuelle: {r.get('url')}"
-                for r in results
+                f"[Fuente {i+1}: {r.get('url')}]\n"
+                f"Título: {r.get('title')}\n"
+                f"Contenido: {r.get('content')}"
+                for i, r in enumerate(results)
             ])
             return formatted_results
             
         except Exception as e:
             logger.error(f"Error en la herramienta de búsqueda web: {e}")
-            return f"Fehler bei der Websuche: {e}"
+            return f"Error durante la búsqueda web: {e}"
 
     def _setup_tools(self) -> List[Tool]:
         """Configura las herramientas para el agente."""
@@ -51,70 +58,72 @@ class WebSearchAgent:
             Tool(
                 name="web_search_tool",
                 func=self._tool_web_search,
-                description="Führt eine Websuche durch, um aktuelle Informationen, Nachrichten und Markttrends zu finden. MUSS für externe Fragen verwendet werden."
+                description="Realiza una búsqueda web para encontrar información actual, noticias y tendencias de mercado. Es la única herramienta para preguntas externas."
             )
         ]
 
     def _create_agent(self) -> AgentExecutor:
-        """Crea el AgentExecutor interno."""
-        # --- CORRECCIÓN AQUÍ ---
-        # El prompt ahora incluye los placeholders {tools} y {tool_names}
+        """Crea el AgentExecutor con un prompt de alta calidad para síntesis y citación."""
+        
+        # --- OPTIMIZACIÓN 2: Prompt completamente reescrito ---
         prompt = PromptTemplate.from_template(
             """
-            Du bist ein Recherche-Agent für AMARETIS Marketing. Deine Aufgabe ist es, externe Informationen und Trends zu finden.
-            
-            ANWEISUNGEN:
-            - Nutze IMMER das Tool 'web_search_tool', um externe und aktuelle Informationen zu finden.
-            - Analysiere die Suchergebnisse und fasse sie präzise zusammen.
-            - Helfe NUR bei recherche-bezogenen Aufgaben (Markttrends, neue Technologien, allgemeine Informationen).
-            - Antworte DIREKT mit den Ergebnissen deiner Arbeit.
+            Eres un "Analista de Inteligencia de Mercado" para AMARETIS. Tu misión es investigar preguntas complejas usando la web, sintetizar los hallazgos en una respuesta coherente y citar siempre tus fuentes.
 
-            VERFÜGBARE TOOLS:
+            **REGLAS CRÍTICAS:**
+            1.  **SINTETIZA, NO COPIES**: Lee la información de todas las fuentes (`Observation`) y escribe una respuesta fluida y original con tus propias palabras. No copies y pegues fragmentos.
+            2.  **CITA MIENTRAS ESCRIBES**: Después de cada afirmación o dato que provenga de una fuente, AÑADE una cita en formato `[número]`. Ejemplo: "El mercado de IA crecerá un 20% en 2025 [1]".
+            3.  **AGREGA UNA SECCIÓN DE FUENTES**: Al final de TODA tu respuesta, añade una sección llamada `Fuentes:` y lista las URLs correspondientes a cada número.
+            4.  **USA MÚLTIPLES FUENTES**: Intenta basar tu respuesta en la información de varias de las fuentes proporcionadas para que sea más completa.
+
+            **EJEMPLO DE RESPUESTA FINAL:**
+            El marketing digital en 2025 se centrará en la hiper-personalización a través de la IA y el contenido de video de formato corto [1]. Además, la privacidad de los datos se volverá un pilar fundamental en la estrategia de las marcas [2]. Se espera que la inversión en marketing de influencers siga creciendo, pero con un enfoque en micro-influencers más auténticos [1, 3].
+
+            Fuentes:
+            [1] https://marketing-trends.com/2025-report
+            [2] https://privacy-laws-weekly.com/analysis
+            [3] https://influencer-today.com/future-of-marketing
+
+            **WERKZEUGE**:
             {tools}
 
-            TOOL-NAMEN:
-            {tool_names}
+            **FORMATO DE PENSAMIENTO (Thought/Action/Observation):**
+            Thought: [Tu razonamiento detallado sobre cómo abordar la pregunta del usuario.]
+            Action: {tool_names}
+            Action Input: [La consulta de búsqueda que enviarás a la herramienta.]
+            Observation: [El resultado de la herramienta, que será proporcionado por el sistema.]
+            ... (puedes repetir este ciclo si la primera búsqueda no es suficiente) ...
+            Thought: [Pensamiento final donde resumes los hallazgos y preparas la respuesta sintetizada y citada.]
+            Final Answer: [Tu respuesta final, bien redactada, con citas en el texto y la lista de fuentes al final, como en el ejemplo.]
 
-            NUTZE DAS FOLGENDE FORMAT:
-            Frage: die ursprüngliche Frage des Benutzers
-            Gedanke: Deine Analyse der Frage und Entscheidung, welches Tool du nutzen musst.
-            Aktion: Der Name des zu nutzenden Tools (aus [{tool_names}])
-            Aktionseingabe: Die Eingabe für das Tool.
-            Beobachtung: Das Ergebnis des Tools.
-            ... (dieser Gedanke/Aktion/Aktionseingabe/Beobachtung kann sich wiederholen)
-            Gedanke: Ich habe jetzt die endgültige Antwort.
-            Endgültige Antwort: die finale Antwort auf die ursprüngliche Frage.
+            **INICIA AHORA**
 
-            BEGINN!
-
-            Frage des Benutzers: {input}
-            Gedankengang:
+            Pregunta del Usuario: {input}
+            Historial de Chat: {history}
+            Tu Gedankengang:
             {agent_scratchpad}
             """
         )
 
-        agent_runnable = create_react_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=prompt,
-        )
+        agent_runnable = create_react_agent(llm=self.llm, tools=self.tools, prompt=prompt)
 
         return AgentExecutor(
             agent=agent_runnable,
             tools=self.tools,
             verbose=False,
             handle_parsing_errors=True,
-            max_iterations=4,
+            max_iterations=5, # Aumentamos una iteración por si necesita refinar la búsqueda
         )
 
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Punto de entrada estándar para LangGraph."""
         user_input = input_dict.get("input", "")
         if not user_input:
-            return {"output": "Error: Eingabe für Websuche leer."}
+            return {"output": "Error: La consulta para el agente de investigación está vacía."}
             
         try:
-            result = self.agent.invoke({"input": user_input})
+            # Pasamos el historial vacío por ahora, se puede integrar más adelante
+            result = self.agent.invoke({"input": user_input, "history": []})
             final_output = result.get("output", str(result))
             return {"output": final_output}
         except Exception as e:
@@ -126,9 +135,9 @@ research_agent = WebSearchAgent()
 
 # --- Bloque de prueba para ejecución directa del archivo ---
 if __name__ == "__main__":
-    print("🔍 Web Search Agent Test")
+    print("🔍 Web Search Agent Test (Analista de Inteligencia de Mercado)")
     question = "Was sind aktuelle Marketing-Trends 2025?"
     
     response_dict = research_agent.invoke({"input": question})
     
-    print(f"\nAntwort:\n{response_dict.get('output')}")
+    print(f"\nRespuesta del Agente:\n{response_dict.get('output')}")
