@@ -74,12 +74,36 @@ class RAGAgent:
     def _safe_qa_invoke(self, qa_chain: RetrievalQA, query: str) -> str:
         try:
             result = qa_chain.invoke({"query": query})
-            # Añadimos un chequeo por si la respuesta o los documentos vienen vacíos
+            
             answer = result.get("result", "")
-            sources = result.get("source_documents", [])
-            if not answer or not sources:
+            source_documents = result.get("source_documents", [])
+
+            if not answer or not source_documents:
                 return "In der Wissensdatenbank wurden keine relevanten Informationen für diese Anfrage gefunden."
-            return answer
+
+            # Formatear las fuentes para la cita
+            citations = []
+            seen_sources = set() # Para evitar duplicados
+
+            for doc in source_documents:
+                # Extraemos los metadatos que nos interesan
+                file_name = doc.metadata.get("file", "N/A")
+                page_num = doc.metadata.get("page", "N/A")
+                
+                # Creamos una clave única para esta fuente (archivo + página)
+                source_key = f"{file_name} (página {page_num})"
+                
+                if source_key not in seen_sources:
+                    citations.append(f"- {source_key}")
+                    seen_sources.add(source_key)
+
+            if citations:
+                # Añadimos la sección de fuentes a la respuesta
+                citations_text = "\n\n**Fuentes:**\n" + "\n".join(citations)
+                return answer + citations_text
+            else:
+                return answer
+
         except Exception as e:
             logger.error(f"Error en QA invoke: {e}")
             return f"Fehler bei der Dokumentensuche: {e}"
