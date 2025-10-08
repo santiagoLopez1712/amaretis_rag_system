@@ -1,4 +1,4 @@
-# supervisor.py (Versión final, robusta y completa)
+# supervisor.py (Versión final, consolidada y funcional)
 
 import os
 import re
@@ -7,7 +7,8 @@ import time
 import operator
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Annotated, TypedDict, Optional
+from typing import Dict, List, Tuple, Any, Annotated, Optional
+from typing_extensions import TypedDict
 
 from dotenv import load_dotenv
 
@@ -43,13 +44,12 @@ class AgentState(TypedDict):
 class SupervisorManager:
 
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
+        # --- CORRECCIÓN: Usar el modelo estable 'gemini-pro' ---
+        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=0.7)
         self.history: List[Dict[str, str]] = []
         self.agents = {}
         self.agent_names = []
         self.rag_vectorstore = None
-        
-        # Le decimos al editor: "self.supervisor será un Runnable, pero empieza siendo None"
         self.supervisor: Optional[Runnable] = None
         
         self.setup_agents()
@@ -100,16 +100,46 @@ class SupervisorManager:
                 agent_response = f"Fehler in Agent {agent_name}: {e}"
             return {"messages": [{"role": "assistant", "content": agent_response, "name": agent_name}]}
         return agent_node_adapter
+    
+    def _handle_simple_query(self, user_input: str) -> Optional[str]:
+        """Verifica si la entrada es una pregunta simple y devuelve una respuesta predefinida."""
+        input_lower = user_input.lower().strip()
+        greetings = ["hola", "hi", "buenos días", "buenas tardes", "hey"]
+        farewells = ["adiós", "hasta luego", "bye", "chao"]
+        capabilities_q = ["qué puedes hacer", "ayuda", "help", "cuáles son tus funciones"]
+        if any(greet in input_lower for greet in greetings):
+            return "¡Hola! Soy el asistente de AMARETIS. ¿En qué puedo ayudarte hoy?"
+        if any(farewell in input_lower for farewell in farewells):
+            return "¡Hasta luego! Si necesitas algo más, no dudes en preguntar."
+        if any(cap in input_lower for cap in capabilities_q):
+            return (
+                "Soy un sistema de IA multi-agente. Mis capacidades incluyen:\n"
+                "- **rag_agent**: Responder preguntas sobre documentos internos.\n"
+                "- **research_agent**: Buscar información actual en la web.\n"
+                "- **data_analysis_agent**: Analizar datos y generar gráficos.\n"
+                "- **compliance_agent**: Revisar la legalidad de los contenidos.\n"
+                "- **brief_generator_agent**: Crear briefs de marketing detallados.\n"
+                "- **integrated_marketing_agent**: Diseñar estrategias de campaña holísticas."
+            )
+        return None
 
-    def _router_node(self, state: AgentState) -> dict:
-        """Nodo de paso que actúa como punto de partida para el enrutamiento."""
-        return {}
-
-    def route_question(self, state: AgentState) -> str:
-        """Usa el LLM para decidir a qué agente delegar la pregunta."""
+    def _direct_response_node(self, state: AgentState) -> dict:
+        """Este nodo se activa para preguntas simples y devuelve la respuesta predefinida."""
         user_input = state["messages"][-1]["content"]
-        available_agents = ", ".join(self.agent_names)
+        response = self._handle_simple_query(user_input)
+        return {"messages": [{"role": "assistant", "content": response, "name": "supervisor"}]}
 
+    # --- CORRECCIÓN 1: La estructura de funciones ahora es correcta y limpia ---
+    def route_question(self, state: AgentState) -> str:
+        """Decide si la pregunta es simple (direct_response) o compleja (enrutar con LLM)."""
+        user_input = state["messages"][-1]["content"]
+        
+        if self._handle_simple_query(user_input) is not None:
+            logger.info("Pregunta simple detectada. Enrutando a 'direct_response'.")
+            return "direct_response"
+        
+        logger.info("Pregunta compleja detectada. Usando el LLM-Router...")
+        available_agents = ", ".join(self.agent_names)
         supervisor_prompt_text = (
             "Eres el supervisor central de AMARETIS. Tu tarea es enrutar la pregunta del usuario "
             f"al agente más apropiado. Las opciones de enrutamiento deben ser exactamente una de: {available_agents}.\n"
@@ -140,44 +170,56 @@ class SupervisorManager:
             return 'rag_agent'
 
     def setup_supervisor(self):
-        """Configura el supervisor (LangGraph StateGraph)."""
+        """Configura el supervisor (LangGraph StateGraph) con la estructura correcta."""
         workflow = StateGraph(AgentState)
         
+        # Añade todos los nodos de los agentes
         for name, agent in self.agents.items():
             workflow.add_node(name, self._create_agent_node(agent))
         
-        workflow.add_node("router", self._router_node)
+        # Añade el nodo para respuestas simples
+        workflow.add_node("direct_response", self._direct_response_node)
+        
+        # El entry point es la función de enrutamiento/triaje
         workflow.set_entry_point("router")
+
+        # Se define un mapa de rutas que incluye a todos los agentes Y la ruta de respuesta directa
+        route_map = {name: name for name in self.agent_names}
+        route_map["direct_response"] = "direct_response"
         
-        workflow.add_conditional_edges("router", self.route_question, {name: name for name in self.agent_names})
+        # Se crean las rutas condicionales desde el punto de entrada 'router'
+        workflow.add_conditional_edges("router", self.route_question, route_map)
         
+        # Se define que todos los nodos, una vez ejecutados, terminan el flujo
+        workflow.add_edge("direct_response", END)
         for name in self.agent_names:
             workflow.add_edge(name, END)
         
         self.supervisor = workflow.compile()
 
+    # --- CORRECCIÓN 2: Flujo de proceso simplificado y optimizado ---
     def process_question(self, user_input: str) -> Tuple[str, str, Optional[str]]:
-        """Procesa una pregunta y devuelve: (texto_respuesta, fuente, ruta_de_imagen_opcional)"""
+        """Procesa una pregunta usando el LangGraph Supervisor una sola vez."""
         if not self.supervisor:
             return "Error: El supervisor no está inicializado.", "Error Crítico", None
 
         image_path: Optional[str] = None
         
         try:
-            selected_agent = self.route_question({"messages": [{"content": user_input}]})
-
-            if selected_agent == "data_analysis_agent":
-                self._clear_figures_directory()
-
+            self._clear_figures_directory()
+            
             initial_state = {"messages": [{"role": "user", "content": user_input, "name": "user"}]}
+            # Se llama al grafo una sola vez. El grafo se encarga de todo el enrutamiento.
             result = self.supervisor.invoke(initial_state) 
             
             if isinstance(result, dict) and "messages" in result:
                 last_message = result["messages"][-1]
                 answer_text = last_message.get("content", "No se pudo obtener respuesta.")
-                source = f"Supervisor → {last_message.get('name', 'N/A')}"
+                source_agent = last_message.get('name', 'N/A')
+                source = f"Supervisor → {source_agent}"
                 
-                if selected_agent == "data_analysis_agent":
+                # Se verifica si se generó una imagen DESPUÉS de la ejecución
+                if source_agent == "data_analysis_agent":
                     image_path = self._get_latest_figure()
             else:
                 answer_text = "Formato de respuesta inesperado."
@@ -256,7 +298,6 @@ class SupervisorManager:
                 
                 print("\nProcesando...")
                 start_time = time.time()
-                # El loop ahora maneja los 3 valores de retorno
                 answer_text, source, image_path = self.process_question(user_input)
                 end_time = time.time()
                 
