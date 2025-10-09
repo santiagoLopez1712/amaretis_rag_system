@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def create_marketing_pipeline(vectorstore) -> Runnable:
     """Crea la cadena de LangChain para la estrategia de marketing."""
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=0.8)
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.8)
 
     # Asegúrate de que el vectorstore no es None antes de usarlo
     if not vectorstore:

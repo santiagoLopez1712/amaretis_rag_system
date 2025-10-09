@@ -1,4 +1,4 @@
-# rag_agent.py 
+# rag_agent.py (Versión con corrección del UnboundLocalError)
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_chroma import Chroma
@@ -7,6 +7,8 @@ from langchain.chains import RetrievalQA
 from langchain_core.output_parsers import StrOutputParser
 from langchain.agents import Tool, AgentExecutor, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import pdfplumber
 from typing import Optional, List, Tuple, Any, Dict
 import logging
 from pathlib import Path
@@ -47,25 +49,10 @@ class RAGAgent:
             logger.error(f"Error cargando vectorstore: {e}")
             return None
     
-    def _safe_llm_invoke(self, query: str) -> str:
-        try:
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=self.temperature)
-            chain = self.llm | StrOutputParser()
-            return chain.invoke(f"Antworte natürlich und hilfreich auf: {query}")
-        except Exception as e:
-            logger.error(f"Error en LLM invoke: {e}")
-            return f"Entschuldigung, technisches Problem: {query}"
-    
     def _create_qa_chain(self, vectorstore: Chroma) -> Optional[RetrievalQA]:
         try:
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=self.temperature)
-            
-            # --- MEJORA DE CALIDAD: Usar 'similarity' para ser menos restrictivo ---
-            retriever = vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs={"k": self.retrieval_k}
-            )
-            
+            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=self.temperature)
+            retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": self.retrieval_k})
             return RetrievalQA.from_chain_type(llm=self.llm, chain_type="stuff", retriever=retriever, verbose=self.debug, return_source_documents=True)
         except Exception as e:
             logger.error(f"Error creando QA chain: {e}")
@@ -74,70 +61,134 @@ class RAGAgent:
     def _safe_qa_invoke(self, qa_chain: RetrievalQA, query: str) -> str:
         try:
             result = qa_chain.invoke({"query": query})
-            # Añadimos un chequeo por si la respuesta o los documentos vienen vacíos
             answer = result.get("result", "")
-            sources = result.get("source_documents", [])
-            if not answer or not sources:
+            source_documents = result.get("source_documents", [])
+            if not answer or not source_documents:
                 return "In der Wissensdatenbank wurden keine relevanten Informationen für diese Anfrage gefunden."
-            return answer
+            citations = []
+            seen_sources = set()
+            for doc in source_documents:
+                file_name = doc.metadata.get("file", "N/A")
+                page_num = doc.metadata.get("page", "N/A")
+                source_key = f"{file_name} (página {page_num})" if page_num != "N/A" else file_name
+                if source_key not in seen_sources:
+                    citations.append(f"- {source_key}")
+                    seen_sources.add(source_key)
+            if citations:
+                citations_text = "\n\n**Fuentes:**\n" + "\n".join(citations)
+                return answer + citations_text
+            else:
+                return answer
         except Exception as e:
             logger.error(f"Error en QA invoke: {e}")
             return f"Fehler bei der Dokumentensuche: {e}"
-    
+
+    def _tool_query_uploaded_pdf(self, query_and_path: str) -> str:
+        try:
+            parts = query_and_path.split('|')
+            if len(parts) != 2:
+                return "Error: Formato de entrada incorrecto. Se esperaba 'ruta|pregunta'."
+            file_path_str, query = parts
+            file_path = Path(file_path_str)
+
+            if not file_path.exists():
+                return f"Error: El archivo no se encuentra en: {file_path_str}"
+
+            logger.info(f"Procesando PDF subido: {file_path_str} para la pregunta: '{query}'")
+            
+            # PASO A: Extraer texto por página
+            pages_content = []
+            with pdfplumber.open(file_path) as pdf:
+                for i, page in enumerate(pdf.pages):
+                    page_text = page.extract_text()
+                    if page_text:
+                        # Guardamos el texto junto con sus metadatos
+                        pages_content.append({"text": page_text, "metadata": {"file": file_path.name, "page": i + 1}})
+            
+            if not pages_content:
+                return "No se pudo extraer texto del PDF. Es posible que sea una imagen escaneada."
+
+            # PASO B: Fragmentar (Chunking) por página
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            
+            # --- CORRECCIÓN CLAVE ---
+            # Primero, creamos los documentos y luego les asignamos los metadatos.
+            docs = []
+            for page in pages_content:
+                chunks = text_splitter.split_text(page["text"])
+                for chunk in chunks:
+                    docs.append(Document(page_content=chunk, metadata=page["metadata"]))
+
+            if not docs:
+                return "El texto extraído del PDF estaba vacío después del procesamiento."
+
+            # PASO C: Crear un Vector Store EN MEMORIA (temporal)
+            embeddings = HuggingFaceEmbeddings(model_name=self.embedding_model)
+            temp_vectorstore = Chroma.from_documents(documents=docs, embedding=embeddings)
+            
+            # PASO D: Realizar la búsqueda y responder
+            qa_chain = self._create_qa_chain(temp_vectorstore)
+            if not qa_chain: return "Error al crear la cadena de Q&A para el archivo subido."
+
+            return self._safe_qa_invoke(qa_chain, query)
+        except Exception as e:
+            logger.error(f"Error en _tool_query_uploaded_pdf: {e}", exc_info=True)
+            return f"Ocurrió un error al procesar el PDF: {e}"
+
     def setup_tools(self, vectorstore: Optional[Chroma] = None) -> List[Tool]:
         tools = []
         if vectorstore is None: vectorstore = self.load_existing_vectorstore()
+        
         if vectorstore:
             qa_chain = self._create_qa_chain(vectorstore)
             if qa_chain:
                 tools.append(Tool(
                     name="document_search",
                     func=lambda query: self._safe_qa_invoke(qa_chain, query),
-                    description="Suche nach spezifischen Informationen in der Wissensdatenbank über Kampagnen, Projekte, Kunden, Strategien und historische Daten."
+                    description="Útil para responder preguntas usando la base de conocimiento interna y permanente de la empresa."
                 ))
+        
         tools.append(Tool(
-            name="general_chat",
-            func=self._safe_llm_invoke,
-            description="Für allgemeine Fragen, Smalltalk oder Fragen die nicht dokumentenbasiert sind."
+            name="uploaded_file_search",
+            func=self._tool_query_uploaded_pdf,
+            description="Útil para responder preguntas sobre un archivo PDF específico que el usuario acaba de subir. El input DEBE ser una cadena con el formato 'ruta/del/archivo.pdf|pregunta del usuario'."
         ))
-        logger.info(f"Tools configurados: {[tool.name for tool in tools]}")
+
+        logger.info(f"Tools configurados para RAG Agent: { [tool.name for tool in tools] }")
         return tools
     
     def create_marketing_agent(self, tools: List[Tool]) -> Optional[AgentExecutor]:
         try:
             prompt = ChatPromptTemplate.from_template("""
-            Du bist ein präziser und faktenbasierter Marketing-Assistent für AMARETIS.
+            Eres el "Bibliotecario Corporativo" de AMARETIS. Tu misión es responder preguntas usando tus herramientas.
 
-            **DEINE WICHTIGSTE REGEL:**
-            **ANTWORTE AUSSCHLIESSLICH BASIEREND AUF DER INFORMATION, DIE DU DURCH DEINE WERKZEUGE ERHÄLTST (DER "OBSERVATION").**
-            **ERFINDE KEINE INFORMATIONEN UND NUTZE NICHT DEIN ALLGEMEINES WISSEN.**
-            Wenn die "Observation" die Antwort nicht enthält, antworte, dass du die Information in den bereitgestellten Dokumenten nicht finden konntest.
+            **REGLAS DE ENRUTAMIENTO DE HERRAMIENTAS:**
+            1.  Si la pregunta del usuario menciona explícitamente un "archivo subido" o contiene una instrucción del sistema sobre un archivo específico, DEBES usar la herramienta `uploaded_file_search`.
+            2.  Para todas las demás preguntas sobre conocimiento general de la empresa, usa la herramienta `document_search`.
+            3.  **ANTWORTE AUSSCHLIESSLICH BASIEREND AUF DER INFORMATION, DIE DU DURCH DEINE WERKZEUGE ERHÄLTST (DER "OBSERVATION").** Si la herramienta no encuentra nada, informa de ello. No inventes.
 
-            **WERKZEUGE**
-            Du hast Zugriff auf die folgenden Werkzeuge:
+            **HERRAMIENTAS (TOOLS):**
             {tools}
 
             **FORMATO DE RESPUESTA OBLIGATORIO**
-            Du musst IMMER das folgende Format verwenden.
-
-            Thought: [Deine detaillierte Analyse der Frage und dein Plan, welches Werkzeug du nutzen wirst.]
-            Action: [Der exakte Name des Werkzeugs. Muss einer aus [{tool_names}] sein.]
-            Action Input: [Die präzise Eingabe für das Werkzeug.]
-            Observation: [Das Ergebnis des Werkzeugs. Dies wird vom System ausgefüllt.]
-            Thought: [Deine Zusammenfassung der gesammelten Informationen und die Formulierung der endgültigen Antwort BASIEREND AUF DER OBSERVATION.]
-            Final Answer: [Die finale, umfassende Antwort auf die ursprüngliche Frage des Benutzers.]
+            Thought: [Tu análisis de la pregunta y tu decisión sobre qué herramienta usar.]
+            Action: [El nombre exacto de la herramienta. Debe ser uno de [{tool_names}]]
+            Action Input: [La entrada para la herramienta. Si usas `uploaded_file_search`, recuerda el formato 'ruta/del/archivo.pdf|pregunta del usuario'.]
+            Observation: [El resultado de la herramienta.]
+            Thought: [Tu resumen de la información obtenida.]
+            Final Answer: [La respuesta final para el usuario.]
 
             **ANFORDERUNG**
-            Beginne jetzt! Beantworte die folgende Frage des Benutzers und halte dich strikt an die oben beschriebenen Regeln.
+            Beginne jetzt!
 
             Bisheriger Verlauf: {history}
             Aktuelle Frage: {input}
             Dein Gedankengang:
             {agent_scratchpad}""")
 
-            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", temperature=self.temperature)
+            if not self.llm: self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=self.temperature)
             agent = create_react_agent(llm=self.llm, tools=tools, prompt=prompt)
-            executor = AgentExecutor(agent=agent, tools=tools, verbose=self.debug, handle_parsing_errors=True, max_iterations=5, max_execution_time=30)
+            executor = AgentExecutor(agent=agent, tools=tools, verbose=self.debug, handle_parsing_errors=True, max_iterations=5, max_execution_time=60)
             executor.name = "rag_agent"
             return executor
         except Exception as e:
@@ -161,7 +212,7 @@ class RAGAgent:
         self.vectorstore = self.load_existing_vectorstore()
         self.tools = self.setup_tools(self.vectorstore)
         if not self.tools:
-            logger.error("No se pudieron configurar las herramientas")
+            logger.error("No se pudieron configurar las herramientas para RAG Agent")
             return None, self.vectorstore
         self.agent = self.create_marketing_agent(self.tools)
         if self.agent:

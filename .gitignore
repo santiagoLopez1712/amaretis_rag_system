@@ -49,9 +49,14 @@ embeddings_cache/
 *.model
 
 # ===== UPLOAD FOLDERS =====
+uploads/*.pdf
+uploads/*.docx
+uploads/*.xlsx
+uploads/*.csv
 data/*.pdf
 data/*.docx
 data/*.xlsx
+data/*.csv
 figures/*.png
 figures/*.jpg
 figures/*.svg

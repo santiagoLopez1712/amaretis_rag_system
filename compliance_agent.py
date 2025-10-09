@@ -21,7 +21,7 @@ class ComplianceAgent:
     
     def __init__(self, temperature: float = 0.3):  # Menor temperatura para compliance
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-exp",
+            model="gemini-pro",
             temperature=temperature
         )
         self.tools = self._setup_tools()

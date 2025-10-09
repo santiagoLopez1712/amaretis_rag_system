@@ -1,106 +1,86 @@
-# data_analysis_agent.py
+# data_analysis_agent.py (Versión optimizada como "Científico de Datos Bajo Demanda")
 
 import os
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from smolagents import InferenceClientModel, CodeAgent 
+import re
+import logging
+from typing import Dict, Any
+
+from smolagents import InferenceClientModel, CodeAgent
 from dotenv import load_dotenv
-# from langchain_core.runnables import RunnableLambda # <--- Ya no es necesario
-from typing import Dict, Any, List
 
-# 🔑 HuggingFace-Token laden und anmelden
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# 📓 Zusätzliche Notizen (z.B. Beschreibung der Spalten)
-additional_notes = """
-### Variablenbeschreibung:
-- 'company': Name des Unternehmens
-- 'concept': Finanzkennzahl (z.B. Umsatz, Ausgaben, Eigenkapital)
-- Spalten im Format '2024-03-31': stellen Quartalsdaten dar
-- Diese Datei enthält Finanzergebnisse verschiedener Unternehmen über mehrere Quartale hinweg.
+GENERAL_NOTES = """
+### ROL Y DIRECTIVAS
+Eres un experto "Científico de Datos" que escribe código en Python para analizar datos y generar visualizaciones.
+
+### REGLAS DE EJECUCIÓN
+1.  **Analiza la Petición**: Lee la petición del usuario para entender qué análisis o visualización necesita.
+2.  **Identifica la Fuente de Datos**: La petición contendrá los datos, ya sea como texto/tabla o mencionando un nombre de archivo (ej. `uploads/mi_archivo.csv`).
+3.  **Escribe el Código**: Usa `pandas` para manipular los datos y `matplotlib.pyplot` o `seaborn` para graficar.
+4.  **GUARDA LAS GRÁFICAS (Regla Crítica)**: Para cualquier visualización, DEBES guardarla en un archivo. **NUNCA uses `plt.show()`**. Usa siempre `plt.savefig('figures/nombre_descriptivo.png')`.
+5.  **Responde con un Resumen**: Tu respuesta final debe ser un texto que describa el análisis realizado o la gráfica generada.
 """
 
-# 🧠 LLM-Modell mit Inference API initialisieren
-# Nota: La librería smolagents maneja internamente la autenticación si HF_TOKEN está en .env
-model = InferenceClientModel("meta-llama/Llama-3.1-70B-Instruct")
+try:
+    model = InferenceClientModel("meta-llama/Llama-3.1-70B-Instruct")
+    smol_agent_instance = CodeAgent(
+        tools=[],
+        model=model,
+        additional_authorized_imports=["numpy", "pandas", "matplotlib.pyplot", "seaborn", "io"]
+    )
+    os.makedirs("figures", exist_ok=True)
+except Exception as e:
+    logging.error(f"Error al inicializar smolagents: {e}")
+    model = None
+    smol_agent_instance = None
 
-# 🤖 Interne smolagents-Instanz definieren
-smol_agent_instance = CodeAgent(
-    tools=[],
-    model=model,
-    additional_authorized_imports=[
-        "numpy",
-        "pandas",
-        "matplotlib.pyplot",
-        "seaborn"
-    ]
-)
-# smol_agent_instance.name = "data_analysis_agent" # El nombre se define en la clase wrapper
-
-# 📁 Sicherstellen, dass der Ausgabeordner existiert
-os.makedirs("figures", exist_ok=True)
-
-
-# ⚙️ WRAPPER-CLASE: Imita la interfaz de AgentExecutor
-# ESTA CLASE ES LA SOLUCIÓN CLAVE para que LangGraph lo compile.
 class DataAnalysisAgentRunnable:
-    """
-    Clase wrapper que adapta smol_agent_instance para la interfaz
-    Runnable/AgentExecutor, permitiendo su uso en LangGraph.
-    """
+    name = "data_analysis_agent"
+
     def __init__(self, smol_agent: CodeAgent, notes: str):
         self.smol_agent = smol_agent
-        self.additional_notes = notes
-        # Definición del nombre para el supervisor
-        self.name = "data_analysis_agent" 
+        self.general_notes = notes
 
-    # Método clave que LangChain/LangGraph invoca
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Función adaptada para LangChain/LangGraph AgentState, recibe {'input': str}
-        y devuelve {'output': str}.
-        """
-        user_prompt = input_dict.get("input", "")
+        if not self.smol_agent:
+            return {"output": "Error: El agente de análisis de datos no pudo inicializarse."}
 
+        user_prompt = input_dict.get("input", "").strip()
         if not user_prompt:
-            return {"output": "Fehler: Keine Eingabe im Diktat gefunden."}
-
-        # Ausführung des smolagents.CodeAgent mit der internen Methode .run()
-        try:
-            # La invocación del agente es directa al método .run() de smolagents
-            antwort = self.smol_agent.run(
-                user_prompt,
-                additional_args={
-                    "source_file": "all_company_financials.csv",
-                    "additional_notes": self.additional_notes
-                }
-            )
-        except Exception as e:
-            return {"output": f"Fehler bei der smolagents-Ausführung: {e}"}
+            return {"output": "Error: La solicitud para el análisis de datos está vacía."}
+            
+        # El 'augmented_prompt' es el mismo 'user_prompt' ya que app.py ya lo enriquece
+        augmented_prompt = user_prompt
         
-        # Rückgabe del resultado en el formato de AgentExecutor/LangGraph
-        return {"output": antwort}
+        try:
+            response = self.smol_agent.run(
+                augmented_prompt,
+                additional_notes=self.general_notes
+            )
+            return {"output": response}
 
-# 🚀 Exportar la instancia de la Clase Wrapper que el Supervisor espera
-# El objeto 'agent' es ahora una instancia de la clase wrapper
-agent = DataAnalysisAgentRunnable(smol_agent=smol_agent_instance, notes=additional_notes) 
+        except Exception as e:
+            logging.error(f"Error en la ejecución de smolagents: {e}")
+            return {"output": f"Fehler bei der smolagents-Ausführung: {e}"}
 
-
-# --- La función generate_apple_profit_plot() no es relevante para el Supervisor ---
-def generate_apple_profit_plot():
-    """Erstellt ein Diagramm für den Gewinn von Apple in den letzten 3 Jahren aus all_company_financials.csv und speichert es unter figures/apple_profit_last3years.png. Gibt den Bildpfad zurück."""
-    # ... (Ihre Implementierung bleibt hier erhalten)
-    return "figures/apple_profit_last3years.png" # Platzhalter
+agent = DataAnalysisAgentRunnable(smol_agent=smol_agent_instance, notes=GENERAL_NOTES)
 
 if __name__ == "__main__":
-    # Test de Consola
-    print("🔍 Data Analysis Agent Test")
-    print("Bitte gib deinen Analyseauftrag ein (z.B. 'Vergleiche die Verbindlichkeiten von Apple und Microsoft im Jahr 2024.'):\n")
-    user_prompt = input("> ")
-
-    # Usamos el wrapper 'agent' para probar la interfaz del Supervisor
-    respuesta_dict = agent.invoke({"input": user_prompt})
-
-    print("\n📊 Analyseergebnis:\n")
+    print("🔍 Data Analysis Agent Test (Científico de Datos Bajo Demanda)")
+    print("Introduce tu petición. Puedes mencionar un archivo o pegar los datos.")
+    
+    test_prompt_pegado = """
+    Analiza los siguientes datos de ventas y crea un gráfico de barras guardado como 'figures/ventas_por_producto.png':
+    
+    Producto,Ventas
+    Laptop,150
+    Mouse,300
+    Teclado,220
+    Monitor,120
+    """
+    print(f"\n--- Probando con datos pegados ---\n{test_prompt_pegado}")
+    respuesta_dict = agent.invoke({"input": test_prompt_pegado})
+    print("\n📊 Resultado del Análisis:\n")
     print(respuesta_dict.get("output", "Error al obtener la respuesta."))

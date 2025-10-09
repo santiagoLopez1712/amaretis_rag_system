@@ -1,17 +1,21 @@
-# app.py (Versión final con UI corregida y optimización)
+# app.py (Versión final con subida de archivos y lanzamiento automático)
 
 import gradio as gr
 import logging
 import argparse
-from typing import List, Optional, Tuple, Dict
+import shutil
+import webbrowser
+from pathlib import Path
+from typing import List, Optional, Tuple, Dict, Any
 
 from supervisor import SupervisorManager
 
-# Configuración del logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- INICIALIZACIÓN ÚNICA (Singleton/Caching) ---
+UPLOADS_DIR = Path("uploads")
+UPLOADS_DIR.mkdir(exist_ok=True)
+
 print("🚀 Inicializando SupervisorManager (esto puede tardar un momento)...")
 try:
     SUPERVISOR_INSTANCE = SupervisorManager()
@@ -26,47 +30,63 @@ except Exception as e:
     print("="*80 + f"\n")
 
 class AmaretisWebApp:
-    """Clase que encapsula la lógica de la aplicación web Gradio."""
     def __init__(self, supervisor: Optional[SupervisorManager]):
         self.supervisor = supervisor
 
-    def process_message(self, message: str, history: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], str, Optional[str]]:
-        """
-        Procesa la pregunta, actualiza el historial con la pregunta y la respuesta,
-        y devuelve el resultado.
-        """
+    def process_message(self, message: str, history: List[Dict[str, str]], uploaded_file: Optional[Any]) -> Tuple[List[Dict[str, str]], str, Optional[str], Optional[Any]]:
         if not self.supervisor:
             error_msg = "El sistema de IA no está disponible debido a un error de inicialización."
             history.append({"role": "user", "content": message})
             history.append({"role": "assistant", "content": error_msg})
-            return history, "", None
+            return history, "", None, None
 
         user_input = message.strip()
-        if not user_input:
-            return history, "", None
+        augmented_input = user_input
+        
+        if uploaded_file is not None:
+            temp_path = Path(uploaded_file.name)
+            permanent_path = UPLOADS_DIR / temp_path.name
+            shutil.copy(temp_path.as_posix(), permanent_path.as_posix())
+            logger.info(f"Archivo subido y guardado en: {permanent_path}")
+            
+            file_extension = permanent_path.suffix.lower()
+            
+            if file_extension in ['.csv', '.xlsx']:
+                instruction = (
+                    f"[Instrucción del sistema: Para esta tarea, utiliza el archivo '{permanent_path.as_posix()}'.]"
+                )
+            elif file_extension == '.pdf':
+                instruction = (
+                    f"[Instrucción del sistema: El usuario ha subido el archivo '{permanent_path.as_posix()}'. "
+                    f"Para responder la pregunta, DEBES usar la herramienta `uploaded_file_search` con el input: "
+                    f"'{permanent_path.as_posix()}|{user_input}' ]"
+                )
+            else:
+                instruction = "[Instrucción del sistema: Se ha subido un archivo de tipo no soportado.]"
 
+            augmented_input = f"{user_input}\n\n{instruction}"
+            print(f"Prompt aumentado: {augmented_input}")
+
+        if not augmented_input and not history:
+             return [], "", None, None
+        
         # Añadimos manualmente el mensaje del usuario al historial para asegurar su visibilidad.
-        history.append({"role": "user", "content": user_input})
+        if user_input:
+            history.append({"role": "user", "content": user_input})
 
         try:
-            answer_text, source, image_path = self.supervisor.process_question(user_input)
-            
+            answer_text, source, image_path = self.supervisor.process_question(augmented_input)
             formatted_answer = f"{answer_text}\n\n📚 *Fuente: {source}*"
-            
-            # Añadimos la respuesta del asistente.
             history.append({"role": "assistant", "content": formatted_answer})
-            
-            return history, "", image_path
+            return history, "", image_path, None
             
         except Exception as e:
             logger.error(f"Error procesando el mensaje: {e}", exc_info=True)
             error_msg = "Lo siento, ocurrió un error inesperado al procesar tu pregunta."
             history.append({"role": "assistant", "content": error_msg})
-            return history, "", None
+            return history, "", None, None
 
 def create_interface(supervisor_instance: Optional[SupervisorManager]) -> gr.Blocks:
-    """Crea y configura la interfaz de usuario de Gradio."""
-    
     if supervisor_instance is None:
         with gr.Blocks(title="Error - AMARETIS") as interface:
             gr.Markdown("# ❌ Error Crítico del Sistema\nEl backend de IA no pudo iniciarse. Por favor, revisa los logs de la terminal para más detalles.")
@@ -82,18 +102,25 @@ def create_interface(supervisor_instance: Optional[SupervisorManager]) -> gr.Blo
         with gr.Row():
             with gr.Column(scale=2):
                 chatbot = gr.Chatbot(label="💬 Marketing Assistant", height=600, elem_classes=["chat-container"], type='messages')
-                msg_input = gr.Textbox(label="Tu Pregunta", placeholder="Ej: 'Crea un brief para un nuevo cliente de bebidas energéticas'")
+                msg_input = gr.Textbox(label="Tu Pregunta", placeholder="Sube un archivo y haz una pregunta sobre él...")
                 with gr.Row():
                     send_btn = gr.Button("📤 Enviar", variant="primary")
                     clear_btn = gr.Button("🗑️ Limpiar Chat", variant="secondary")
             
             with gr.Column(scale=1):
                 image_output = gr.Image(label="📈 Visualización", height=400)
-                gr.HTML("<h3>💡 Consejos</h3><ul><li>Pide resúmenes de campañas.</li><li>Solicita la creación de un brief.</li><li>Pide análisis de datos para generar gráficos.</li></ul>")
-
-        send_btn.click(fn=app.process_message, inputs=[msg_input, chatbot], outputs=[chatbot, msg_input, image_output])
-        msg_input.submit(fn=app.process_message, inputs=[msg_input, chatbot], outputs=[chatbot, msg_input, image_output])
-        clear_btn.click(lambda: ([], "", None), outputs=[chatbot, msg_input, image_output])
+                file_uploader = gr.File(label="Subir Archivo (PDF, CSV, XLSX)", file_types=[".pdf", ".csv", ".xlsx"])
+                gr.HTML("<h3>💡 Consejos</h3><ul><li>Sube un PDF y haz preguntas sobre su contenido.</li><li>Sube un CSV y pide un análisis.</li><li>Pide la creación de un brief.</li></ul>")
+        
+        event_args = {
+            "fn": app.process_message,
+            "inputs": [msg_input, chatbot, file_uploader],
+            "outputs": [chatbot, msg_input, image_output, file_uploader]
+        }
+        send_btn.click(**event_args)
+        msg_input.submit(**event_args)
+        
+        clear_btn.click(lambda: ([], "", None, None), outputs=[chatbot, msg_input, image_output, file_uploader])
         
     return interface
 
@@ -106,6 +133,11 @@ if __name__ == "__main__":
     if SUPERVISOR_INSTANCE is not None:
         print("🚀 Lanzando la interfaz de AMARETIS...")
         interface = create_interface(supervisor_instance=SUPERVISOR_INSTANCE)
+        
+        # --- NUEVA FUNCIONALIDAD: Abrir el navegador automáticamente ---
+        def open_browser():
+            webbrowser.open(f"http://localhost:{args.port}")
+
         interface.launch(server_name=args.host, server_port=args.port)
-    else:
+    
         print("🔴 La aplicación no se lanzará debido a un error fatal en la inicialización.")
