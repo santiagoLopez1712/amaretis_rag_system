@@ -1,24 +1,29 @@
-# integrated_marketing_agent.py (Versión refactorizada con Wrapper)
+# integrated_marketing_agent.py (Versión final con Vertex AI y rol de Estratega)
 
+import os
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+from dotenv import load_dotenv
+from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnablePassthrough
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.output_parsers import StrOutputParser
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
-def create_marketing_pipeline(vectorstore) -> Runnable:
-    """Crea la cadena de LangChain para la estrategia de marketing."""
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.8)
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+if not PROJECT_ID:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_PROJECT no está configurada.")
 
-    # Asegúrate de que el vectorstore no es None antes de usarlo
+def create_marketing_pipeline(vectorstore: Optional[Any]) -> Runnable:
+    """Crea la cadena de LangChain para la estrategia de marketing."""
+    llm = ChatVertexAI(project=PROJECT_ID, model="gemini-1.5-flash-001", temperature=0.8)
+
     if not vectorstore:
-        # Esto devuelve un retriever "falso" que no hará nada si no hay vectorstore
-        # para evitar que el programa se caiga al iniciar.
         class DummyRetriever:
-            def invoke(self, input): return []
-            def __call__(self, input): return []
+            def get_relevant_documents(self, query): return []
         retriever = DummyRetriever()
         logger.warning("Vectorstore no proporcionado a IntegratedMarketingAgent, el contexto estará vacío.")
     else:
@@ -26,36 +31,36 @@ def create_marketing_pipeline(vectorstore) -> Runnable:
 
     prompt_template = ChatPromptTemplate.from_template(
         """
-        Du bist ein Senior Marketing Strategist bei AMARETIS. Deine Aufgabe ist es, eine integrierte Marketing-Strategie zu entwickeln.
+        Eres un "Estratega de Campañas Senior" en AMARETIS. Tu tarea es responder a preguntas de alto nivel con un marco estratégico holístico.
 
-        KONTEXT (Ähnliche Kampagnen):
+        **CONTEXTO DE CAMPAÑAS SIMILARES (si está disponible):**
         {context}
 
-        AUFGABE:
-        Basierend auf dem Kontext und der folgenden Anfrage, entwickle eine ganzheitliche Marketing-Strategie.
-        Die Strategie sollte folgende Punkte umfassen:
-        1.  **Zielgruppen-Analyse**: Wer sind die primären und sekundären Zielgruppen?
-        2.  **Kernbotschaft**: Was ist die zentrale Botschaft der Kampagne?
-        3.  **Kanal-Mix**: Welche Kanäle (Online/Offline) sollten genutzt werden und warum? (z.B. Social Media, SEO, Content Marketing, PR, Events)
-        4.  **Phasen & Timing**: Skizziere einen groben Zeitplan für die Kampagne (z.B. Teasing, Launch, Sustain).
-        5.  **KPIs**: Welche 3-5 Kennzahlen sind entscheidend für den Erfolg?
+        **TAREA:**
+        Basándote en el contexto y la siguiente pregunta, desarrolla una estrategia de marketing de alto nivel.
+        La estrategia debe enfocarse en los siguientes pilares:
+        1.  **Análisis Estratégico**: ¿Cuál es el problema principal a resolver y la oportunidad de mercado?
+        2.  **Público Objetivo Clave**: Descripción del perfil principal al que nos dirigimos.
+        3.  **Concepto Creativo Central**: ¿Cuál es la gran idea o el mensaje principal de la campaña?
+        4.  **Pilares Tácticos**: Sugerencia de las principales áreas de acción (ej. Marketing de Contenidos, Eventos Exclusivos, Campaña Digital).
+        5.  **KPIs Estratégicos**: ¿Cuáles son las 2-3 métricas más importantes para medir el éxito general?
 
-        ANFRAGE DES BENUTZERS:
+        **PREGUNTA DEL USUARIO:**
         {question}
 
-        ANTWORTE mit einer klaren, strukturierten und professionellen Strategie.
+        **RESPUESTA:**
+        Proporciona una respuesta clara, profesional y estratégica. No entres en detalles de ejecución, enfócate en el "qué" y el "porqué".
         """
     )
 
-    # La cadena de LangChain que define la lógica
     pipeline = (
         {"context": retriever, "question": RunnablePassthrough()}
         | prompt_template
         | llm
+        | StrOutputParser()
     )
     return pipeline
 
-# ⚙️ WRAPPER-CLASE: La solución para la compatibilidad con el Supervisor
 class IntegratedMarketingAgent:
     """
     Clase wrapper que adapta la cadena de marketing para la interfaz
@@ -63,28 +68,25 @@ class IntegratedMarketingAgent:
     """
     name = "integrated_marketing_agent"
 
-    def __init__(self, vectorstore):
-        # La lógica real del agente es la cadena de LangChain
+    def __init__(self, vectorstore: Optional[Any]):
         self.pipeline: Runnable = create_marketing_pipeline(vectorstore)
 
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """Punto de entrada estándar para LangGraph."""
+        """Punto de entrada para LangGraph que pasa correctamente el historial."""
         user_input = input_dict.get("input", "")
         if not user_input:
             return {"output": "Error: La solicitud para el agente de marketing integrado está vacía."}
             
         try:
-            # Invocamos la cadena de LangChain interna
+            # Aunque este agente no es conversacional, pasamos el historial por consistencia.
+            history = input_dict.get("history", [])
             response = self.pipeline.invoke(user_input)
             
-            # Extraemos el contenido del AIMessage o del string
-            final_output = response.content if hasattr(response, 'content') else str(response)
-            
-            return {"output": final_output}
+            return {"output": response}
         except Exception as e:
             logger.error(f"Error en la invocación del Integrated Marketing Agent: {e}")
             return {"output": f"Error técnico en el agente de marketing integrado: {e}"}
 
-# La función que el supervisor importará para crear el agente
-def create_integrated_marketing_agent(vectorstore):
+def create_integrated_marketing_agent(vectorstore: Optional[Any]) -> IntegratedMarketingAgent:
+    """Función de fábrica para crear una instancia del agente."""
     return IntegratedMarketingAgent(vectorstore)

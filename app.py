@@ -1,4 +1,4 @@
-# app.py (Versión final con subida de archivos y lanzamiento automático)
+# app.py (Versión final con subida de archivos, caching y lanzamiento automático)
 
 import gradio as gr
 import logging
@@ -8,6 +8,7 @@ import webbrowser
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
+# Asegúrate de que el supervisor se importa correctamente
 from supervisor import SupervisorManager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -30,19 +31,21 @@ except Exception as e:
     print("="*80 + f"\n")
 
 class AmaretisWebApp:
+    """Clase que encapsula la lógica de la aplicación web Gradio."""
     def __init__(self, supervisor: Optional[SupervisorManager]):
         self.supervisor = supervisor
 
     def process_message(self, message: str, history: List[Dict[str, str]], uploaded_file: Optional[Any]) -> Tuple[List[Dict[str, str]], str, Optional[str], Optional[Any]]:
+        """Procesa la pregunta, maneja el archivo subido y actualiza el historial."""
         if not self.supervisor:
             error_msg = "El sistema de IA no está disponible debido a un error de inicialización."
-            history.append({"role": "user", "content": message})
+            if message: history.append({"role": "user", "content": message})
             history.append({"role": "assistant", "content": error_msg})
             return history, "", None, None
 
         user_input = message.strip()
         augmented_input = user_input
-        
+
         if uploaded_file is not None:
             temp_path = Path(uploaded_file.name)
             permanent_path = UPLOADS_DIR / temp_path.name
@@ -65,14 +68,13 @@ class AmaretisWebApp:
                 instruction = "[Instrucción del sistema: Se ha subido un archivo de tipo no soportado.]"
 
             augmented_input = f"{user_input}\n\n{instruction}"
-            print(f"Prompt aumentado: {augmented_input}")
+            logger.info(f"Prompt aumentado: {augmented_input}")
 
-        if not augmented_input and not history:
-             return [], "", None, None
-        
-        # Añadimos manualmente el mensaje del usuario al historial para asegurar su visibilidad.
-        if user_input:
-            history.append({"role": "user", "content": user_input})
+        if not augmented_input:
+            # Evita procesar si no hay ni texto ni archivo
+            return history, "", None, None
+
+        history.append({"role": "user", "content": user_input})
 
         try:
             answer_text, source, image_path = self.supervisor.process_question(augmented_input)
@@ -87,6 +89,8 @@ class AmaretisWebApp:
             return history, "", None, None
 
 def create_interface(supervisor_instance: Optional[SupervisorManager]) -> gr.Blocks:
+    """Crea y configura la interfaz de usuario de Gradio."""
+    
     if supervisor_instance is None:
         with gr.Blocks(title="Error - AMARETIS") as interface:
             gr.Markdown("# ❌ Error Crítico del Sistema\nEl backend de IA no pudo iniciarse. Por favor, revisa los logs de la terminal para más detalles.")
@@ -135,9 +139,16 @@ if __name__ == "__main__":
         interface = create_interface(supervisor_instance=SUPERVISOR_INSTANCE)
         
         # --- NUEVA FUNCIONALIDAD: Abrir el navegador automáticamente ---
-        def open_browser():
+        # Gradio > 4 usa el argumento 'inbrowser' directamente en launch()
+        # pero para asegurar compatibilidad, lo manejamos así.
+        # En versiones más nuevas, simplemente `inbrowser=True` podría funcionar.
+        def open_url():
             webbrowser.open(f"http://localhost:{args.port}")
-
+        
+        # Abrimos el navegador un segundo después de lanzar el servidor
+        # para darle tiempo a iniciarse.
+        interface.load(fn=open_url, inputs=None, outputs=None, _js="(async () => { await new Promise(r => setTimeout(r, 1000)); })")
+        
         interface.launch(server_name=args.host, server_port=args.port)
-    
+    else:
         print("🔴 La aplicación no se lanzará debido a un error fatal en la inicialización.")

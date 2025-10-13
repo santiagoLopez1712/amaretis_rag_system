@@ -1,25 +1,31 @@
-# brief_generator_agent.py 
+# brief_generator_agent.py (Versión final con Vertex AI y memoria corregida)
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+import os
+import logging
+import json
+from typing import Dict, List, Any, Optional
+
+from dotenv import load_dotenv
+from langchain_google_vertexai import ChatVertexAI
 from langchain.agents import Tool, AgentExecutor, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser # <-- 1. Importación necesaria
-import json
-from typing import Dict, List, Any
-import logging
+from langchain_core.output_parsers import StrOutputParser
 
+load_dotenv()
 logger = logging.getLogger(__name__)
+
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+if not PROJECT_ID:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_PROJECT no está configurada.")
 
 class BriefGeneratorAgent:
     name = "brief_generator_agent"
     
     def __init__(self, vectorstore, temperature: float = 0.7):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=temperature)
+        self.llm = ChatVertexAI(project=PROJECT_ID, model="gemini-1.5-flash-001", temperature=temperature)
         self.vectorstore = vectorstore
         self.tools = self._setup_tools()
-        self.agent = self._create_agent()
-
-    # --- 2. Las funciones de las herramientas ahora son métodos de la clase ---
+        self.agent: Optional[AgentExecutor] = self._create_agent()
 
     def _tool_search_similar_campaigns(self, query: str) -> str:
         """Busca campañas similares en la base de conocimiento."""
@@ -53,7 +59,6 @@ class BriefGeneratorAgent:
         Responde en formato estructurado para usar en un brief.
         """)
         try:
-            # --- 3. Aplicamos el patrón LCEL con StrOutputParser ---
             chain = prompt | self.llm | StrOutputParser()
             response = chain.invoke({"client_info": client_info})
             return response
@@ -76,7 +81,6 @@ class BriefGeneratorAgent:
         Enfócate en objetivos de marketing realistas y medibles.
         """)
         try:
-            # --- 4. Aplicamos el patrón LCEL con StrOutputParser ---
             chain = prompt | self.llm | StrOutputParser()
             response = chain.invoke({"campaign_info": campaign_info})
             return response
@@ -106,22 +110,35 @@ class BriefGeneratorAgent:
         return tools
     
     def _create_agent(self) -> AgentExecutor:
-        # ... (El resto del código para _create_agent, invoke, etc. no necesita cambios)
+        """Crea el AgentExecutor para el brief generator."""
         prompt = ChatPromptTemplate.from_template("""
-        Du bist ein erfahrener Strategic Planner bei AMARETIS, spezialisiert auf die Erstellung professioneller Marketing-Briefings.
-        Deine Aufgabe ist es, basierend auf Client-Informationen und Kampagnen-Requirements strukturierte, actionable Briefings zu erstellen.
-        
-        PROZESS:
-        1. Analysiere die Client-Anfrage und identifiziere Schlüssel-Requirements.
-        2. Suche nach ähnlichen erfolgreichen Kampagnen als Referenz mit `search_similar_campaigns`.
-        3. Analysiere die Zielgruppe mit `analyze_target_segment`.
-        4. Generiere SMART-Objectives mit `generate_smart_objectives`.
-        5. Erstelle einen strukturierten Brief con todos los elementos.
+        Eres un "Planificador Táctico" experto en AMARETIS. Tu única función es recibir un objetivo y generar un documento de briefing de marketing detallado y estructurado.
 
-        Verfügbare Tools: {tools}
-        Tool-Namen: {tool_names}
-        Aktuelle Anfrage: {input}
-        Bisherige Schritte: {agent_scratchpad}
+        **PROCESO OBLIGATORIO:**
+        1. Analiza la petición del usuario para extraer el cliente, el objetivo y el presupuesto.
+        2. Usa `search_similar_campaigns` para encontrar inspiración y casos de éxito.
+        3. Usa `analyze_target_segment` para definir la audiencia.
+        4. Usa `generate_smart_objectives` para crear los KPIs.
+        5. Sintetiza toda la información en un único documento de briefing con la siguiente estructura: Executive Summary, Client Background, Target Audience, Campaign Objectives (SMART), Key Messages, Recommended Channels, KPIs, y Timeline.
+        
+        **HERRAMIENTAS:**
+        {tools}
+
+        **FORMATO DE PENSAMIENTO:**
+        Thought: [Tu razonamiento siguiendo el proceso paso a paso.]
+        Action: [Herramienta a usar de [{tool_names}]]
+        Action Input: [Input para la herramienta.]
+        Observation: [Resultado de la herramienta.]
+        ... (puedes repetir este ciclo) ...
+        Thought: Ya tengo toda la información necesaria para construir el brief final.
+        Final Answer: [El documento de briefing completo y bien estructurado.]
+
+        **INICIA AHORA**
+        
+        Historial de Chat: {history}
+        Petición Actual: {input}
+        Tu Gedankengang:
+        {agent_scratchpad}
         """)
         
         agent = create_react_agent(llm=self.llm, tools=self.tools, prompt=prompt)
@@ -137,11 +154,14 @@ class BriefGeneratorAgent:
         return executor
     
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Punto de entrada para LangGraph que pasa correctamente el historial."""
         user_input = input_dict.get("input", "")
         if not user_input:
-            return {"output": "Error: Entrada de usuario vacía para la generación del brief."}
+            return {"output": "Error: La solicitud para generar el brief está vacía."}
         try:
-            result = self.agent.invoke({"input": user_input, "history": []}) # History se puede añadir más tarde
+            # Pasa correctamente el historial que recibe del supervisor.
+            history = input_dict.get("history", [])
+            result = self.agent.invoke({"input": user_input, "history": history})
             final_output = result.get("output", str(result))
             return {"output": final_output}
         except Exception as e:
@@ -149,4 +169,5 @@ class BriefGeneratorAgent:
             return {"output": f"Fehler bei Brief-Generierung: {e}"}
 
 def create_brief_generator_agent(vectorstore) -> BriefGeneratorAgent:
+    """Función de fábrica para crear una instancia del agente."""
     return BriefGeneratorAgent(vectorstore)

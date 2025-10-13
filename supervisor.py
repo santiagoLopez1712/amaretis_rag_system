@@ -1,4 +1,4 @@
-# supervisor.py (Versión final con grafo corregido y mejor triaje)
+# supervisor.py (Versión final con Vertex AI)
 
 import os
 import re
@@ -12,7 +12,7 @@ from typing_extensions import TypedDict
 
 from dotenv import load_dotenv
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import Runnable
@@ -28,13 +28,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 load_dotenv()
 
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+if not PROJECT_ID:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_PROJECT no está configurada en el archivo .env")
+
 class AgentState(TypedDict):
     messages: Annotated[List[Any], operator.add]
 
 class SupervisorManager:
 
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=0.7)
+        self.llm = ChatVertexAI(project=PROJECT_ID, model="gemini-1.5-flash-001", temperature=0.7)
         self.history: List[Dict[str, str]] = []
         self.agents = {}
         self.agent_names = []
@@ -79,14 +83,11 @@ class SupervisorManager:
         return agent_node_adapter
 
     def _handle_simple_query(self, user_input: str) -> Optional[str]:
-        # --- MEJORA: Lógica de detección más estricta ---
         input_lower = user_input.lower().strip()
-        # Para ser considerado un saludo, debe ser muy corto.
         if len(input_lower.split()) <= 3:
             greetings = ["hola", "hi", "buenos días", "buenas tardes", "hey"]
             if any(greet == input_lower for greet in greetings):
                 return "¡Hola! Soy el asistente de AMARETIS. ¿En qué puedo ayudarte hoy?"
-
         capabilities_q = ["qué puedes hacer", "ayuda", "help", "cuáles son tus funciones"]
         if any(cap in input_lower for cap in capabilities_q):
             return (
@@ -108,9 +109,8 @@ class SupervisorManager:
     def route_question(self, state: AgentState) -> str:
         user_input = state["messages"][-1]["content"]
         if self._handle_simple_query(user_input) is not None:
+            logger.info("Pregunta simple detectada. Enrutando a 'direct_response'.")
             return "direct_response"
-        
-        # El resto de la función de enrutamiento con LLM no cambia
         logger.info("Pregunta compleja detectada. Usando el LLM-Router...")
         available_agents = ", ".join(self.agent_names)
         supervisor_prompt_text = (
@@ -142,59 +142,40 @@ class SupervisorManager:
         for name, agent in self.agents.items():
             workflow.add_node(name, self._create_agent_node(agent))
         workflow.add_node("direct_response", self._direct_response_node)
-        
-        # --- CORRECCIÓN FINAL DEL GRAFO ---
-        # El nodo 'router' debe usar una función que devuelva un diccionario.
-        # En este caso, la función de enrutamiento ya hace la decisión, por lo que el nodo puede ser la misma función.
-        # Sin embargo, el error indica que un NODO no puede devolver un string.
-        # Por lo tanto, separamos el nodo de la lógica condicional.
         def router_entry_node(state):
-            """Nodo de entrada que no hace nada más que permitir que la lógica condicional se ejecute después."""
             return {}
-
         workflow.add_node("router", router_entry_node)
         workflow.set_entry_point("router")
-        
         route_map = {name: name for name in self.agent_names}
         route_map["direct_response"] = "direct_response"
-        
-        # La ruta condicional parte de 'router' y usa la lógica de 'route_question' que devuelve un string
         workflow.add_conditional_edges("router", self.route_question, route_map)
-        
         workflow.add_edge("direct_response", END)
         for name in self.agent_names:
             workflow.add_edge(name, END)
-        
         self.supervisor = workflow.compile()
 
     def process_question(self, user_input: str) -> Tuple[str, str, Optional[str]]:
         if not self.supervisor:
             return "Error: El supervisor no está inicializado.", "Error Crítico", None
-
         image_path: Optional[str] = None
-        
         try:
             self._clear_figures_directory()
             initial_state = {"messages": [{"role": "user", "content": user_input, "name": "user"}]}
             result = self.supervisor.invoke(initial_state) 
-            
             if isinstance(result, dict) and "messages" in result:
                 last_message = result["messages"][-1]
                 answer_text = last_message.get("content", "No se pudo obtener respuesta.")
                 source_agent = last_message.get('name', 'N/A')
                 source = f"Supervisor → {source_agent}"
-                
                 if source_agent == "data_analysis_agent":
                     image_path = self._get_latest_figure()
             else:
                 answer_text = "Formato de respuesta inesperado."
                 source = "Error de Supervisor"
-            
             return answer_text, source, image_path
         except Exception as e:
             logger.error(f"Error crítico en el flujo del supervisor: {e}", exc_info=True)
             return "Lo siento, hubo un error crítico en el sistema de agentes.", "Error Crítico", None
-
 
     def _get_latest_figure(self) -> Optional[str]:
         try:
