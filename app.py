@@ -137,18 +137,9 @@ if __name__ == "__main__":
     if SUPERVISOR_INSTANCE is not None:
         print("🚀 Lanzando la interfaz de AMARETIS...")
         interface = create_interface(supervisor_instance=SUPERVISOR_INSTANCE)
-        
-        # --- NUEVA FUNCIONALIDAD: Abrir el navegador automáticamente ---
-        # Gradio > 4 usa el argumento 'inbrowser' directamente en launch()
-        # pero para asegurar compatibilidad, lo manejamos así.
-        # En versiones más nuevas, simplemente `inbrowser=True` podría funcionar.
-        def open_url():
-            webbrowser.open(f"http://localhost:{args.port}")
-        
-        # Abrimos el navegador un segundo después de lanzar el servidor
-        # para darle tiempo a iniciarse.
-        interface.load(fn=open_url, inputs=None, outputs=None, _js="(async () => { await new Promise(r => setTimeout(r, 1000)); })")
-        
-        interface.launch(server_name=args.host, server_port=args.port)
+
+        # Lanzamos la interfaz y le pedimos a Gradio que abra el navegador automáticamente.
+        # El argumento 'inbrowser=True' es la forma estándar y compatible de hacerlo.
+        interface.launch(server_name=args.host, server_port=args.port, inbrowser=True)
     else:
         print("🔴 La aplicación no se lanzará debido a un error fatal en la inicialización.")

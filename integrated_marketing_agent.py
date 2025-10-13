@@ -1,13 +1,12 @@
-# integrated_marketing_agent.py (Versión final con Vertex AI y rol de Estratega)
+# integrated_marketing_agent.py (Versión con DummyRetriever corregido)
 
 import os
 import logging
 from typing import Dict, Any, Optional
-
 from dotenv import load_dotenv
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable, RunnablePassthrough
+from langchain_core.runnables import Runnable, RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
@@ -17,15 +16,25 @@ PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 if not PROJECT_ID:
     raise ValueError("La variable de entorno GOOGLE_CLOUD_PROJECT no está configurada.")
 
+REGION = os.getenv("GOOGLE_CLOUD_REGION")
+if not REGION:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_REGION no está configurada.")
+
 def create_marketing_pipeline(vectorstore: Optional[Any]) -> Runnable:
     """Crea la cadena de LangChain para la estrategia de marketing."""
-    llm = ChatVertexAI(project=PROJECT_ID, model="gemini-1.5-flash-001", temperature=0.8)
+    llm = ChatVertexAI(
+        project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=0.8
+    )
 
     if not vectorstore:
-        class DummyRetriever:
-            def get_relevant_documents(self, query): return []
-        retriever = DummyRetriever()
-        logger.warning("Vectorstore no proporcionado a IntegratedMarketingAgent, el contexto estará vacío.")
+        # --- CORRECCIÓN CLAVE ---
+        # El DummyRetriever ahora es una función compatible con LCEL (RunnableLambda)
+        def dummy_retriever_func(query: str):
+            logger.warning("Vectorstore no proporcionado, el contexto de búsqueda estará vacío.")
+            return []
+        
+        retriever = RunnableLambda(dummy_retriever_func)
+
     else:
         retriever = vectorstore.as_retriever(k=5)
 
@@ -78,10 +87,8 @@ class IntegratedMarketingAgent:
             return {"output": "Error: La solicitud para el agente de marketing integrado está vacía."}
             
         try:
-            # Aunque este agente no es conversacional, pasamos el historial por consistencia.
             history = input_dict.get("history", [])
             response = self.pipeline.invoke(user_input)
-            
             return {"output": response}
         except Exception as e:
             logger.error(f"Error en la invocación del Integrated Marketing Agent: {e}")

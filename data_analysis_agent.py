@@ -1,107 +1,174 @@
-# data_analysis_agent.py (Versión con capacidad de análisis de tablas en PDF)
+# data_analysis_agent.py (Refactorizado con LangChain y Vertex AI)
 
 import os
 import re
-import io
 import logging
 import pandas as pd
 import pdfplumber
-from typing import Dict, Any, Optional
+import matplotlib.pyplot as plt
+from typing import Dict, Any, Optional, List
 
-from smolagents import InferenceClientModel, CodeAgent
 from dotenv import load_dotenv
+from langchain_google_vertexai import ChatVertexAI
+from langchain.agents import Tool, AgentExecutor, create_react_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# --- OPTIMIZACIÓN 1: Instrucciones Generales y Robustas ---
-# Ahora incluye la nueva habilidad de leer tablas de PDFs.
-GENERAL_NOTES = """
-### ROL Y DIRECTIVAS
-Eres un experto "Científico de Datos" que escribe código en Python para analizar datos y generar visualizaciones.
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+if not PROJECT_ID:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_PROJECT no está configurada.")
 
-### REGLAS DE EJECUCIÓN
-1.  **Analiza la Petición**: Lee la petición del usuario para entender qué análisis o visualización necesita.
-2.  **Identifica la Fuente de Datos**: La petición mencionará un nombre de archivo (ej. `uploads/mi_archivo.pdf` o `uploads/mis_datos.csv`).
-3.  **PROCESA EL ARCHIVO**:
-    * Si el archivo es un **PDF**, DEBES usar primero el código `extract_tables_from_pdf(file_path)` para convertir las tablas en DataFrames de pandas. Luego, selecciona el DataFrame más relevante para el análisis.
-    * Si el archivo es un **CSV o XLSX**, puedes leerlo directamente con `pd.read_csv(file_path)` o `pd.read_excel(file_path)`.
-4.  **Escribe el Código de Análisis**: Usa los DataFrames obtenidos para manipular los datos y `matplotlib.pyplot` o `seaborn` para graficar.
-5.  **GUARDA LAS GRÁFICAS (Regla Crítica)**: Para cualquier visualización, DEBES guardarla en un archivo. **NUNCA uses `plt.show()`**. Usa siempre `plt.savefig('figures/nombre_descriptivo.png')`.
-6.  **Responde con un Resumen**: Tu respuesta final debe ser un texto que describa el análisis realizado o la gráfica generada.
-"""
+REGION = os.getenv("GOOGLE_CLOUD_REGION")
+if not REGION:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_REGION no está configurada.")
 
-# --- NUEVA HABILIDAD: Función para extraer tablas de un PDF ---
-def extract_tables_from_pdf(file_path: str) -> list:
-    """Extrae todas las tablas de un archivo PDF y las devuelve como una lista de DataFrames de pandas."""
-    if not file_path.lower().endswith('.pdf'):
-        raise ValueError("El archivo proporcionado no es un PDF.")
-    
-    tables = []
-    with pdfplumber.open(file_path) as pdf:
-        for page_num, page in enumerate(pdf.pages):
-            extracted_tables = page.extract_tables()
-            for table_data in extracted_tables:
-                df = pd.DataFrame(table_data[1:], columns=table_data[0])
-                tables.append(df)
-    logging.info(f"Se extrajeron {len(tables)} tablas del archivo {file_path}")
-    return tables
-
-# Inicialización del modelo y del agente base
-try:
-    model = InferenceClientModel("meta-llama/Llama-3.1-70B-Instruct")
-    smol_agent_instance = CodeAgent(
-        tools=[extract_tables_from_pdf], # <-- Se añade la nueva función como una herramienta
-        model=model,
-        additional_authorized_imports=["numpy", "pandas", "matplotlib.pyplot", "seaborn", "io", "pdfplumber"]
-    )
-    os.makedirs("figures", exist_ok=True)
-except Exception as e:
-    logging.error(f"Error al inicializar smolagents: {e}")
-    model = None
-    smol_agent_instance = None
-
-class DataAnalysisAgentRunnable:
-    """
-    Wrapper que adapta smol_agent_instance para ser un "Científico de Datos Bajo Demanda",
-    compatible con la interfaz de LangGraph.
-    """
+class DataAnalysisAgent:
     name = "data_analysis_agent"
 
-    def __init__(self, smol_agent: Optional[CodeAgent], notes: str):
-        self.smol_agent = smol_agent
-        self.general_notes = notes
+    def __init__(self, temperature: float = 0.5):
+        self.llm = ChatVertexAI(project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=temperature)
+        self.tools = self._setup_tools()
+        self.agent: Optional[AgentExecutor] = self._create_agent()
+        os.makedirs("figures", exist_ok=True)
+
+    def _load_dataframe(self, file_path: str) -> Optional[pd.DataFrame]:
+        """Carga un archivo (CSV, XLSX, o tabla de PDF) en un DataFrame de pandas."""
+        try:
+            file_path = file_path.strip().strip("'\"") # Limpiar la ruta
+            if file_path.lower().endswith('.csv'):
+                return pd.read_csv(file_path)
+            elif file_path.lower().endswith('.xlsx'):
+                return pd.read_excel(file_path)
+            elif file_path.lower().endswith('.pdf'):
+                with pdfplumber.open(file_path) as pdf:
+                    for page in pdf.pages:
+                        tables = page.extract_tables()
+                        if tables:
+                            table_data = tables[0]
+                            df = pd.DataFrame(table_data[1:], columns=table_data[0])
+                            logger.info(f"Tabla extraída de PDF {file_path} con {len(df)} filas.")
+                            return df
+                logger.warning(f"No se encontraron tablas en el PDF: {file_path}")
+                return None
+            else:
+                logger.error(f"Tipo de archivo no soportado: {file_path}")
+                return None
+        except Exception as e:
+            logger.error(f"Error cargando el archivo {file_path}: {e}")
+            return None
+
+    def _tool_analyze_dataframe(self, query: str) -> str:
+        """
+        Analiza un archivo de datos (CSV, XLSX, PDF) para responder una pregunta.
+        Input: Una cadena que contiene la ruta del archivo y la pregunta, separados por '|'.
+        Ejemplo: 'uploads/datos.csv|¿Cuál es el promedio de ventas?'
+        """
+        try:
+            code_to_execute = "" # Inicializar para un manejo de errores robusto
+            file_path, user_question = query.split('|', 1)
+            df = self._load_dataframe(file_path.strip())
+            if df is None:
+                return f"Error: No se pudo cargar o encontrar datos tabulares en el archivo {file_path}."
+
+            code_prompt = ChatPromptTemplate.from_template(
+                "Dada la siguiente pregunta y las primeras 5 filas de un DataFrame de pandas llamado 'df', escribe una única línea de código de pandas que responda a la pregunta. "
+                "Solo responde con el código. No uses print(). El código será ejecutado con pd.eval().\n\n"
+                "Pregunta: {question}\n\nDataFrame (df.head()):\n{head}\n\nCódigo de Pandas:"
+            )
+            chain = code_prompt | self.llm | StrOutputParser()
+            code_to_execute = chain.invoke({"question": user_question, "head": df.head().to_string()}).strip()
+            
+            logger.info(f"Ejecutando código de análisis: {code_to_execute}")
+            # Usamos pandas.eval para una ejecución más segura que el eval() de Python
+            result = pd.eval(code_to_execute, engine='python', local_dict={'df': df})
+            
+            return f"Análisis completado. Resultado:\n{str(result)}"
+        except Exception as e:
+            error_message = f"Error durante el análisis: {e}. El código que falló fue: '{code_to_execute}'"
+            logger.error(error_message)
+            return error_message
+
+    def _tool_create_visualization(self, query: str) -> str:
+        """
+        Crea una visualización a partir de un archivo de datos.
+        Input: Una cadena que contiene la ruta del archivo y la descripción del gráfico, separados por '|'.
+        Ejemplo: 'uploads/datos.csv|Crea un gráfico de barras de ventas por categoría'
+        """
+        try:
+            code_to_execute = "" # Inicializar para un manejo de errores robusto
+            file_path, user_question = query.split('|', 1)
+            df = self._load_dataframe(file_path.strip())
+            if df is None:
+                return f"Error: No se pudo cargar o encontrar datos tabulares en el archivo {file_path}."
+
+            code_prompt = ChatPromptTemplate.from_template(
+                "Escribe código Python usando matplotlib.pyplot (como plt) y un DataFrame de pandas llamado 'df' para crear la visualización solicitada. "
+                "GUARDA la figura en 'figures/plot.png'. NO uses plt.show().\n\n"
+                "Petición: {question}\n\nColumnas del DataFrame (df.columns): {columns}\n\nCódigo Python:"
+            )
+            chain = code_prompt | self.llm | StrOutputParser()
+            code_to_execute = chain.invoke({"question": user_question, "columns": df.columns.tolist()}).strip('`python \n')
+
+            logger.info(f"Ejecutando código de visualización: {code_to_execute}")
+            exec_globals = {'df': df, 'plt': plt}
+            exec(code_to_execute, exec_globals)
+
+            return "Visualización creada y guardada en 'figures/plot.png'."
+        except Exception as e:
+            error_message = f"Error durante la visualización: {e}. El código que falló fue: '{code_to_execute}'"
+            logger.error(error_message)
+            return error_message
+
+    def _setup_tools(self) -> List[Tool]:
+        return [
+            Tool(name="analyze_dataframe", func=self._tool_analyze_dataframe, description="Útil para realizar cálculos, estadísticas o análisis sobre datos de un archivo."),
+            Tool(name="create_visualization", func=self._tool_create_visualization, description="Útil para crear un gráfico o visualización a partir de los datos de un archivo.")
+        ]
+
+    def _create_agent(self) -> AgentExecutor:
+        prompt = ChatPromptTemplate.from_template("""
+        Eres un "Científico de Datos". Tu trabajo es analizar datos de archivos y crear visualizaciones.
+        La pregunta del usuario contendrá una instrucción del sistema con la ruta del archivo, como '[Instrucción del sistema: Para esta tarea, utiliza el archivo 'uploads/archivo.csv'.]'.
+        
+        **PROCESO OBLIGATORIO:**
+        1. Extrae la ruta del archivo de la instrucción del sistema.
+        2. Extrae la pregunta real del usuario.
+        3. Elige la herramienta correcta: `analyze_dataframe` para cálculos, `create_visualization` para gráficos.
+        4. Construye el input de la herramienta en el formato 'ruta/del/archivo|pregunta del usuario'.
+
+        Herramientas: {tools}
+        
+        Thought: [Tu razonamiento para extraer la ruta, la pregunta y elegir la herramienta.]
+        Action: [Herramienta a usar de [{tool_names}]]
+        Action Input: [La cadena combinada 'ruta/del/archivo|pregunta del usuario']
+        Observation: [Resultado de la herramienta.]
+        Thought: Ya tengo la respuesta.
+        Final Answer: [Un resumen claro del resultado para el usuario.]
+
+        Pregunta: {input}
+        Historial: {history}
+        Tu Gedankengang: {agent_scratchpad}
+        """)
+        agent = create_react_agent(llm=self.llm, tools=self.tools, prompt=prompt)
+        return AgentExecutor(agent=agent, tools=self.tools, verbose=False, handle_parsing_errors=True, max_iterations=5, max_execution_time=60)
 
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Detecta el tipo de archivo mencionado en el prompt y ejecuta el análisis.
-        """
-        if not self.smol_agent:
+        if not self.agent:
             return {"output": "Error: El agente de análisis de datos no pudo inicializarse."}
-
-        user_prompt = input_dict.get("input", "").strip()
-        if not user_prompt:
+        user_input = input_dict.get("input", "")
+        if not user_input:
             return {"output": "Error: La solicitud para el análisis de datos está vacía."}
-
-        # El prompt ya viene aumentado desde app.py con la ruta del archivo.
-        # La lógica del agente se encargará de decidir cómo leerlo.
-        augmented_prompt = user_prompt
         
         try:
             history = input_dict.get("history", [])
-            response = self.smol_agent.run(
-                augmented_prompt,
-                additional_notes=self.general_notes
-            )
-            return {"output": response}
+            result = self.agent.invoke({"input": user_input, "history": history})
+            return {"output": result.get("output", str(result))}
         except Exception as e:
-            logging.error(f"Error en la ejecución de smolagents: {e}")
-            return {"output": f"Fehler bei der smolagents-Ausführung: {e}"}
+            logger.error(f"Error en la invocación del Data Analysis Agent: {e}")
+            return {"output": f"Error en el agente de análisis de datos: {e}"}
 
-# Exportamos la instancia del Wrapper que el Supervisor espera
-agent = DataAnalysisAgentRunnable(smol_agent=smol_agent_instance, notes=GENERAL_NOTES)
-
-if __name__ == "__main__":
-    # Bloque de prueba para ejecución directa del archivo (opcional)
-    print("🔍 Data Analysis Agent Test (Científico de Datos Bajo Demanda)")
-    # ... (código de prueba puede ser añadido aquí)
+agent = DataAnalysisAgent()

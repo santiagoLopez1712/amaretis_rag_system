@@ -17,6 +17,10 @@ PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 if not PROJECT_ID:
     raise ValueError("La variable de entorno GOOGLE_CLOUD_PROJECT no está configurada.")
 
+REGION = os.getenv("GOOGLE_CLOUD_REGION")
+if not REGION:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_REGION no está configurada.")
+
 class ComplianceAgent:
     """
     Agente especializado en compliance, governance y tratamiento de datos
@@ -27,7 +31,8 @@ class ComplianceAgent:
     def __init__(self, temperature: float = 0.3):
         self.llm = ChatVertexAI(
             project=PROJECT_ID,
-            model="gemini-1.5-flash-001",
+            location=REGION,
+            model="gemini-2.5-pro",
             temperature=temperature
         )
         self.tools = self._setup_tools()

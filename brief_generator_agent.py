@@ -18,11 +18,15 @@ PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 if not PROJECT_ID:
     raise ValueError("La variable de entorno GOOGLE_CLOUD_PROJECT no está configurada.")
 
+REGION = os.getenv("GOOGLE_CLOUD_REGION")
+if not REGION:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_REGION no está configurada.")
+
 class BriefGeneratorAgent:
     name = "brief_generator_agent"
     
     def __init__(self, vectorstore, temperature: float = 0.7):
-        self.llm = ChatVertexAI(project=PROJECT_ID, model="gemini-1.5-flash-001", temperature=temperature)
+        self.llm = ChatVertexAI(project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=temperature)
         self.vectorstore = vectorstore
         self.tools = self._setup_tools()
         self.agent: Optional[AgentExecutor] = self._create_agent()

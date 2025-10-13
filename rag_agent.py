@@ -1,4 +1,4 @@
-# rag_agent.py (Versión optimizada como "Bibliotecario Corporativo")
+# rag_agent.py (Versión con carga de DB corregida)
 
 import os
 import logging
@@ -23,6 +23,10 @@ PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 if not PROJECT_ID:
     raise ValueError("La variable de entorno GOOGLE_CLOUD_PROJECT no está configurada.")
 
+REGION = os.getenv("GOOGLE_CLOUD_REGION")
+if not REGION:
+    raise ValueError("La variable de entorno GOOGLE_CLOUD_REGION no está configurada.")
+
 class RAGAgent:
     name = "rag_agent"
     
@@ -39,26 +43,39 @@ class RAGAgent:
         self.agent: Optional[AgentExecutor] = None
 
     def load_existing_vectorstore(self) -> Optional[Chroma]:
+        """Carga el vectorstore de ChromaDB de forma robusta."""
         try:
             if not Path(self.persist_directory).exists():
-                logger.warning(f"Directorio {self.persist_directory} no existe")
+                logger.error(f"El directorio de la base de datos Chroma no existe: {self.persist_directory}")
+                logger.error("Por favor, ejecuta primero el script 'data_chunkieren.py' para crear la base de datos.")
                 return None
+            
             embeddings = HuggingFaceEmbeddings(model_name=self.embedding_model, model_kwargs={'device': 'cpu'}, encode_kwargs={'normalize_embeddings': True})
-            vectorstore = Chroma(collection_name=self.collection_name, embedding_function=embeddings, persist_directory=self.persist_directory)
-            count = vectorstore._collection.count()
-            logger.info(f"Vectorstore cargado con {count} documentos")
-            if count == 0:
-                logger.warning("Vectorstore está vacío")
-                return None
+            
+            vectorstore = Chroma(
+                collection_name=self.collection_name, 
+                embedding_function=embeddings, 
+                persist_directory=self.persist_directory
+            )
+            
+            # --- CORRECCIÓN CLAVE ---
+            # Verificamos si la colección tiene elementos de una forma más robusta.
+            # El método .get() puede causar errores internos en ChromaDB con colecciones vacías.
+            # Usar ._collection.count() es más seguro.
+            if vectorstore._collection.count() > 0:
+                logger.info(f"Vectorstore '{self.collection_name}' cargado exitosamente desde {self.persist_directory}")
+            else:
+                logger.warning("El vectorstore existe pero está vacío.")
+
             return vectorstore
         except Exception as e:
-            logger.error(f"Error cargando vectorstore: {e}")
+            logger.error(f"Error crítico al cargar ChromaDB: {e}", exc_info=True)
             return None
     
     def _create_qa_chain(self, vectorstore: Chroma) -> Optional[RetrievalQA]:
         try:
             if not self.llm: 
-                self.llm = ChatVertexAI(project=PROJECT_ID, model="gemini-1.5-flash-001", temperature=self.temperature)
+                self.llm = ChatVertexAI(project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=self.temperature)
             retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": self.retrieval_k})
             return RetrievalQA.from_chain_type(llm=self.llm, chain_type="stuff", retriever=retriever, verbose=self.debug, return_source_documents=True)
         except Exception as e:
@@ -195,7 +212,7 @@ class RAGAgent:
             {agent_scratchpad}""")
 
             if not self.llm: 
-                self.llm = ChatVertexAI(project=PROJECT_ID, model="gemini-1.5-flash-001", temperature=self.temperature)
+                self.llm = ChatVertexAI(project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=self.temperature)
             agent = create_react_agent(llm=self.llm, tools=tools, prompt=prompt)
             executor = AgentExecutor(agent=agent, tools=tools, verbose=self.debug, handle_parsing_errors=True, max_iterations=5, max_execution_time=60)
             executor.name = "rag_agent"
@@ -205,7 +222,6 @@ class RAGAgent:
             return None
     
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """Punto de entrada para LangGraph que pasa correctamente el historial."""
         if not self.agent:
             self.agent, _ = self.initialize_complete_agent()
             if not self.agent: return {"output": "Fehler: RAG Agent konnte nicht initialisiert werden."}
