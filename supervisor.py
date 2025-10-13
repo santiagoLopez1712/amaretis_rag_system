@@ -48,7 +48,7 @@ class AgentState(TypedDict):
 class SupervisorManager:
 
     def __init__(self):
-        self.llm = ChatVertexAI(project=PROJECT_ID, model="gemini-2.0-flash-exp", temperature=0.7)
+        self.llm = ChatVertexAI(project=PROJECT_ID, model="gemini-2.5-pro", temperature=0.7)
         self.history: List[Dict[str, str]] = []
         self.agents = {}
         self.agent_names = []
