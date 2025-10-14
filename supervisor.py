@@ -54,7 +54,6 @@ class SupervisorManager:
         self.llm_router_temperature = 0.2 # Temperatura más baja para el router para ser más determinista
 
         self.llm = ChatVertexAI(project=PROJECT_ID, model=self.model_name, temperature=self.llm_router_temperature)
-        self.history: List[Dict[str, str]] = []
         self.agents = {}
         self.agent_names = []
         self.rag_vectorstore = None
@@ -102,10 +101,13 @@ class SupervisorManager:
     def _create_agent_node(self, agent_executor: Any) -> Any:
         """[ADAPTADOR] Adapta cualquier agente para que sea compatible con LangGraph."""
         def agent_node_adapter(state: AgentState) -> Dict[str, List[Dict[str, Any]]]:
-            user_input = state["messages"][-1]["content"]
+            # El historial es el estado completo de los mensajes del grafo
+            history = state["messages"]
+            user_input = history[-1]["content"]
             agent_name = getattr(agent_executor, 'name', 'unknown_agent')
             try:
-                result = agent_executor.invoke({"input": user_input, "history": self.history})
+                # Pasamos el historial completo de la conversación actual al agente
+                result = agent_executor.invoke({"input": user_input, "history": history})
                 agent_response = result.get('output', str(result))
             except Exception as e:
                 logger.error(f"Error durante la ejecución del agente {agent_name}: {e}")
@@ -210,8 +212,8 @@ class SupervisorManager:
         
         self.supervisor = workflow.compile()
 
-    def process_question(self, user_input: str) -> Tuple[str, str, Optional[str]]:
-        """Procesa una pregunta usando el LangGraph Supervisor una sola vez."""
+    def process_question(self, user_input: str, history: List[Dict[str, Any]]) -> Tuple[str, str, Optional[str]]:
+        """Procesa una pregunta usando el LangGraph Supervisor, manteniendo el historial."""
         if not self.supervisor:
             return "Error: El supervisor no está inicializado.", "Error Crítico", None
 
@@ -219,7 +221,12 @@ class SupervisorManager:
         
         try:
             self._clear_figures_directory()
-            initial_state = {"messages": [{"role": "user", "content": user_input, "name": "user"}]}
+            
+            # Construye el estado inicial del grafo con el historial completo + la nueva pregunta
+            messages = history + [{"role": "user", "content": user_input, "name": "user"}]
+            initial_state = {"messages": messages}
+            
+            # Invoca el grafo
             result = self.supervisor.invoke(initial_state) 
             
             if isinstance(result, dict) and "messages" in result:
@@ -265,30 +272,4 @@ class SupervisorManager:
         except Exception as e:
             logger.error(f"Error limpiando el directorio 'figures': {e}")
 
-    def is_insufficient(self, answer: str, user_input: str = "") -> bool:
-        """Verifica si la respuesta es insuficiente."""
-        if not answer or not isinstance(answer, str) or len(answer.strip()) < 10: return True
-        insufficient_phrases = ["keine daten", "nicht verfügbar", "unbekannt", "weiß ich nicht", "kann ich nicht", "no data"]
-        if any(phrase in answer.lower() for phrase in insufficient_phrases): return True
-        numeric_keywords = ["wie viel", "umsatz", "gewinn", "zahlen", "betrag", "revenue", "budget", "kosten"]
-        if any(kw in user_input.lower() for kw in numeric_keywords):
-            if not re.search(r"\d", answer): return True
-        return False
-        
-    def log_interaction(self, user_input: str, answer: str, source: str):
-        """Log de interacciones."""
-        try:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            insuff_flag = "❗" if self.is_insufficient(answer, user_input) else "✅"
-            log_entry = (f"\n⏰ {timestamp}\n{insuff_flag} Pregunta: {user_input}\nAntwort: {answer}\nQuelle: {source}\n{'-' * 60}\n")
-            with open("chat_log.txt", "a", encoding="utf-8") as f:
-                f.write(log_entry)
-        except Exception as e:
-            logger.error(f"Error al escribir log: {e}")
-    
-    def update_history(self, user_input: str, answer: str):
-        """Actualiza el historial de conversación."""
-        self.history.append({"role": "user", "content": user_input})
-        self.history.append({"role": "assistant", "content": answer})
-        if len(self.history) > 20:
-            self.history = self.history[-20:]
+
