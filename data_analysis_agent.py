@@ -6,6 +6,7 @@ import logging
 import pandas as pd
 import pdfplumber
 import matplotlib.pyplot as plt
+import uuid
 from typing import Dict, Any, Optional, List
 
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ from langchain_google_vertexai import ChatVertexAI
 from langchain.agents import Tool, AgentExecutor, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_experimental.tools import PythonAstREPLTool
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -33,7 +35,6 @@ class DataAnalysisAgent:
         self.llm = ChatVertexAI(project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=temperature)
         self.tools = self._setup_tools()
         self.agent: Optional[AgentExecutor] = self._create_agent()
-        os.makedirs("figures", exist_ok=True)
 
     def _load_dataframe(self, file_path: str) -> Optional[pd.DataFrame]:
         """Carga un archivo (CSV, XLSX, o tabla de PDF) en un DataFrame de pandas."""
@@ -75,16 +76,18 @@ class DataAnalysisAgent:
                 return f"Error: No se pudo cargar o encontrar datos tabulares en el archivo {file_path}."
 
             code_prompt = ChatPromptTemplate.from_template(
-                "Dada la siguiente pregunta y las primeras 5 filas de un DataFrame de pandas llamado 'df', escribe una única línea de código de pandas que responda a la pregunta. "
-                "Solo responde con el código. No uses print(). El código será ejecutado con pd.eval().\n\n"
-                "Pregunta: {question}\n\nDataFrame (df.head()):\n{head}\n\nCódigo de Pandas:"
+                "Dada la siguiente pregunta y las primeras 5 filas de un DataFrame de pandas llamado 'df', escribe un script de Python que imprima el resultado de la pregunta. "
+                "Solo responde con el código. El código será ejecutado en un REPL de Python seguro.\n\n"
+                "Pregunta: {question}\n\nDataFrame (df.head()):\n{head}\n\nCódigo Python:"
             )
             chain = code_prompt | self.llm | StrOutputParser()
-            code_to_execute = chain.invoke({"question": user_question, "head": df.head().to_string()}).strip()
+            code_to_execute = chain.invoke({"question": user_question, "head": df.head().to_string()}).strip('`python \n`').strip()
             
             logger.info(f"Ejecutando código de análisis: {code_to_execute}")
-            # Usamos pandas.eval para una ejecución más segura que el eval() de Python
-            result = pd.eval(code_to_execute, engine='python', local_dict={'df': df})
+            
+            # Usamos PythonAstREPLTool para una ejecución segura
+            repl = PythonAstREPLTool(locals={"df": df})
+            result = repl.run(code_to_execute)
             
             return f"Análisis completado. Resultado:\n{str(result)}"
         except Exception as e:
@@ -105,19 +108,29 @@ class DataAnalysisAgent:
             if df is None:
                 return f"Error: No se pudo cargar o encontrar datos tabulares en el archivo {file_path}."
 
+            # Generar un nombre de archivo único para el gráfico
+            os.makedirs("figures", exist_ok=True)
+            plot_filename = f"figures/plot_{uuid.uuid4()}.png"
+
             code_prompt = ChatPromptTemplate.from_template(
                 "Escribe código Python usando matplotlib.pyplot (como plt) y un DataFrame de pandas llamado 'df' para crear la visualización solicitada. "
-                "GUARDA la figura en 'figures/plot.png'. NO uses plt.show().\n\n"
+                " GUARDA la figura en la ruta '{plot_path}'. NO uses plt.show().\n\n"
                 "Petición: {question}\n\nColumnas del DataFrame (df.columns): {columns}\n\nCódigo Python:"
             )
             chain = code_prompt | self.llm | StrOutputParser()
-            code_to_execute = chain.invoke({"question": user_question, "columns": df.columns.tolist()}).strip('`python \n')
+            code_to_execute = chain.invoke({
+                "question": user_question, 
+                "columns": df.columns.tolist(),
+                "plot_path": plot_filename
+            }).strip('`python \n`').strip()
 
             logger.info(f"Ejecutando código de visualización: {code_to_execute}")
-            exec_globals = {'df': df, 'plt': plt}
-            exec(code_to_execute, exec_globals)
+            
+            # Usamos PythonAstREPLTool para una ejecución segura
+            repl = PythonAstREPLTool(locals={"df": df, "plt": plt})
+            repl.run(code_to_execute)
 
-            return "Visualización creada y guardada en 'figures/plot.png'."
+            return f"Visualización creada y guardada en '{plot_filename}'."
         except Exception as e:
             error_message = f"Error durante la visualización: {e}. El código que falló fue: '{code_to_execute}'"
             logger.error(error_message)
@@ -147,7 +160,7 @@ class DataAnalysisAgent:
         Action Input: [La cadena combinada 'ruta/del/archivo|pregunta del usuario']
         Observation: [Resultado de la herramienta.]
         Thought: Ya tengo la respuesta.
-        Final Answer: [Un resumen claro del resultado para el usuario.]
+        Final Answer: [Un resumen claro del resultado para el usuario. Si se creó una visualización, asegúrate de mencionar la ruta del archivo donde se guardó.]
 
         Pregunta: {input}
         Historial: {history}
