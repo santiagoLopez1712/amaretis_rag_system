@@ -35,3 +35,4 @@ tavily-python
 
 # ===== UI =====
 gradio
+faiss-cpu
