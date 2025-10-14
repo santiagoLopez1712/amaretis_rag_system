@@ -1,8 +1,9 @@
-# compliance_agent.py (Refactorizado para configuración centralizada)
+# compliance_agent.py (Refactorizado para leer reglas desde YAML)
 
 import os
 import re
 import logging
+import yaml
 from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
@@ -28,25 +29,29 @@ class ComplianceAgent:
     """
     name = "compliance_agent" 
     
-    def __init__(self, model_name: str = "gemini-2.5-pro", temperature: float = 0.3):
+    def __init__(self, model_name: str = "gemini-2.5-pro", temperature: float = 0.3, rules_path: str = "compliance_rules.yaml"):
         self.llm = ChatVertexAI(
             project=PROJECT_ID,
             location=REGION,
-            model=model_name, # Usar configuración centralizada
+            model=model_name,
             temperature=temperature
         )
+        try:
+            with open(rules_path, 'r', encoding='utf-8') as f:
+                self.rules = yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.error(f"Archivo de reglas de compliance no encontrado en: {rules_path}")
+            self.rules = {}
+        except Exception as e:
+            logger.error(f"Error cargando o parseando el archivo YAML de reglas: {e}")
+            self.rules = {}
+
         self.tools = self._setup_tools()
         self.agent: Optional[AgentExecutor] = self._create_agent()
     
     def _tool_check_gdpr_compliance(self, content: str) -> str:
         """Verifica compliance con DSGVO/GDPR."""
-        personal_data_patterns = {
-            "email": r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-            "phone": r'(\+49|0)\d{2,4}[-\s]?\d{6,8}',
-            "name": r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b',
-            "address": r'\d+\s+[A-Za-z\s]+,\s*\d{5}\s+[A-Za-z]+',
-        }
-        
+        personal_data_patterns = self.rules.get('gdpr_patterns', {})
         findings = []
         for data_type, pattern in personal_data_patterns.items():
             matches = re.findall(pattern, content)
@@ -70,22 +75,20 @@ class ComplianceAgent:
 
     def _tool_check_marketing_compliance(self, campaign_content: str) -> str:
         """Prüft Marketing-Compliance nach deutschem Recht."""
-        compliance_issues = {
-            "superlative": r'\b(beste[rn]?|einzig|weltweit führend|revolutionär)\b',
-            "medical_claims": r'\b(heilt|therapiert|medizinisch bewiesen)\b', 
-            "financial_promises": r'\b(garantiert|risikofrei|sicher verdienen)\b',
-            "urgency_pressure": r'\b(nur heute|letzte chance|sofort)\b',
-        }
-        
+        compliance_issues = self.rules.get('marketing_compliance', {})
         issues = []
-        for issue_type, pattern in compliance_issues.items():
+        for issue_type, details in compliance_issues.items():
+            if not isinstance(details, dict): continue
+            pattern = details.get('pattern')
+            if not pattern: continue
+
             matches = re.findall(pattern, campaign_content.lower())
             if matches:
                 issues.append({
                     "type": issue_type,
                     "matches": list(set(matches)),
-                    "risk": self._get_compliance_risk(issue_type),
-                    "recommendation": self._get_compliance_recommendation(issue_type)
+                    "risk": details.get('risk', 'UNBEKANNT'),
+                    "recommendation": details.get('recommendation', self.rules.get('marketing_compliance', {}).get('default_recommendation', 'Rechtsberatung einholen.'))
                 })
         
         if not issues:
@@ -101,21 +104,15 @@ class ComplianceAgent:
 
     def _tool_check_data_retention(self, data_info: str) -> str:
         """Prüft und empfiehlt Datenaufbewahrungsrichtlinien."""
-        retention_guidelines = {
-            "customer_data": "3 Jahre nach letztem Kontakt (DSGVO Art. 5)",
-            "campaign_data": "5 Jahre für Reporting-Zwecke", 
-            "financial_data": "10 Jahre (HGB §257)",
-            "web_analytics": "14 Monate (TTDSG)",
-            "email_marketing": "Bis Widerruf + 3 Jahre Nachweis"
-        }
-        
+        retention_guidelines = self.rules.get('data_retention', {}).get('guidelines', {})
         recommendations = []
         for data_type, retention in retention_guidelines.items():
-            if data_type.replace("_", " ") in data_info.lower():
+            if data_type.replace(" ", " ") in data_info.lower():
                 recommendations.append(f"📋 {data_type.title()}: {retention}")
         
         if not recommendations:
-            recommendations = ["📋 Allgemeine Empfehlung: 3 Jahre Aufbewahrung für Marketing-Daten, sofern keine gesetzlichen Ausnahmen gelten."]
+            default_rec = self.rules.get('data_retention', {}).get('default_recommendation', "Keine spezifische Empfehlung gefunden.")
+            recommendations.append(default_rec)
         
         report = "🗂️ DATENAUFBEWAHRUNG EMPFEHLUNGEN:\n\n"
         report += "\n".join(recommendations)
@@ -125,7 +122,7 @@ class ComplianceAgent:
 
     def _setup_tools(self) -> List[Tool]:
         """Herramientas específicas para compliance"""
-        tools = [
+        return [
             Tool(
                 name="check_gdpr_compliance",
                 func=self._tool_check_gdpr_compliance,
@@ -142,38 +139,15 @@ class ComplianceAgent:
                 description="Gibt Empfehlungen für Datenaufbewahrungszeiten basierend auf deutschen und EU-Gesetzen."
             )
         ]
-        return tools
     
     def _get_gdpr_recommendation(self, data_type: str) -> str:
-        """Empfehlungen für DSGVO-Compliance"""
-        recommendations = {
-            "email": "Einverständniserklärung einholen, Opt-out ermöglichen.",
-            "phone": "Explizite Einwilligung für Telefonmarketing erforderlich (Double-Opt-In empfohlen).", 
-            "name": "Datenminimierung beachten, nur notwendige Namen speichern.",
-            "address": "Zweckbindung beachten, regelmäßig aktualisieren und nur für den vereinbarten Zweck verwenden."
-        }
-        return recommendations.get(data_type, "DSGVO-konforme Verarbeitung sicherstellen.")
+        """Empfehlungen für DSGVO-Compliance aus den Regeln."""
+        recommendations = self.rules.get('gdpr_recommendations', {})
+        return recommendations.get(data_type, recommendations.get('default', "DSGVO-konforme Verarbeitung sicherstellen."))
     
-    def _get_compliance_risk(self, issue_type: str) -> str:
-        """Risikobewertung für Compliance-Issues"""
-        risk_levels = {
-            "superlative": "MITTEL",
-            "medical_claims": "HOCH", 
-            "financial_promises": "HOCH",
-            "urgency_pressure": "NIEDRIG"
-        }
-        return risk_levels.get(issue_type, "MITTEL")
-    
-    def _get_compliance_recommendation(self, issue_type: str) -> str:
-        """Empfehlungen für Compliance-Issues"""
-        recommendations = {
-            "superlative": "Aussagen belegen (z.B. mit Studien) oder abschwächen (z.B. 'einer der führenden...').",
-            "medical_claims": "Strengstens vermeiden, es sei denn, es handelt sich um ein zugelassenes medizinisches Produkt mit Belegen.",
-            "financial_promises": "Vermeiden. Stattdessen über potenzielle Vorteile sprechen und Risiken erwähnen.",
-            "urgency_pressure": "Zeitdruck reduzieren und transparent kommunizieren (z.B. 'Angebot gültig bis...')."
-        }
-        return recommendations.get(issue_type, "Rechtsberatung einholen.")
-    
+    # Las funciones _get_compliance_risk y _get_compliance_recommendation ya no son necesarias
+    # porque su lógica ahora está dentro de _tool_check_marketing_compliance
+
     def _create_agent(self) -> AgentExecutor:
         """Erstellt Compliance-Agent"""
         prompt = ChatPromptTemplate.from_template("""
@@ -229,4 +203,3 @@ class ComplianceAgent:
         except Exception as e:
             logger.error(f"Error bei der Ausführung des Compliance Agent: {e}")
             return {"output": f"Fehler bei der Compliance-Prüfung: {e}"}
-

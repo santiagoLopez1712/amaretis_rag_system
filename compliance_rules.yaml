@@ -1,0 +1,43 @@
+
+# Reglas para el Agente de Compliance
+
+gdpr_patterns:
+  email: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+  phone: '(\+49|0)\d{2,4}[-\s]?\d{6,8}'
+  name: '\b[A-Z][a-z]+\s+[A-Z][a-z]+\b'
+  address: '\d+\s+[A-Za-z\s]+,\s*\d{5}\s+[A-Za-z]+'
+
+gdpr_recommendations:
+  email: "Einverständniserklärung einholen, Opt-out ermöglichen."
+  phone: "Explizite Einwilligung für Telefonmarketing erforderlich (Double-Opt-In empfohlen)."
+  name: "Datenminimierung beachten, nur notwendige Namen speichern."
+  address: "Zweckbindung beachten, regelmäßig aktualisieren und nur für den vereinbarten Zweck verwenden."
+  default: "DSGVO-konforme Verarbeitung sicherstellen."
+
+marketing_compliance:
+  superlative:
+    pattern: '\b(beste[rn]?|einzig|weltweit führend|revolutionär)\b'
+    risk: "MITTEL"
+    recommendation: "Aussagen belegen (z.B. mit Studien) oder abschwächen (z.B. 'einer der führenden...')."
+  medical_claims:
+    pattern: '\b(heilt|therapiert|medizinisch bewiesen)\b'
+    risk: "HOCH"
+    recommendation: "Strengstens vermeiden, es sei denn, es handelt sich um ein zugelassenes medizinisches Produkt mit Belegen."
+  financial_promises:
+    pattern: '\b(garantiert|risikofrei|sicher verdienen)\b'
+    risk: "HOCH"
+    recommendation: "Vermeiden. Stattdessen über potenzielle Vorteile sprechen und Risiken erwähnen."
+  urgency_pressure:
+    pattern: '\b(nur heute|letzte chance|sofort)\b'
+    risk: "NIEDRIG"
+    recommendation: "Zeitdruck reduzieren und transparent kommunizieren (z.B. 'Angebot gültig bis...')."
+  default_recommendation: "Rechtsberatung einholen."
+
+data_retention:
+  guidelines:
+    customer_data: "3 Jahre nach letztem Kontakt (DSGVO Art. 5)"
+    campaign_data: "5 Jahre für Reporting-Zwecke"
+    financial_data: "10 Jahre (HGB §257)"
+    web_analytics: "14 Monate (TTDSG)"
+    email_marketing: "Bis Widerruf + 3 Jahre Nachweis"
+  default_recommendation: "📋 Allgemeine Empfehlung: 3 Jahre Aufbewahrung für Marketing-Daten, sofern keine gesetzlichen Ausnahmen gelten."
