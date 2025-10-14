@@ -104,8 +104,9 @@ class QueryAnalyzer:
 class RAGAgent:
     name = "rag_agent"
     
-    def __init__(self, debug: bool = False, temperature: float = 0.7, **kwargs):
+    def __init__(self, debug: bool = False, model_name: str = "gemini-2.5-pro", temperature: float = 0.7, **kwargs):
         self.debug = debug
+        self.model_name = model_name
         self.temperature = temperature
         self.collection_name = kwargs.get("collection_name", CHROMA_COLLECTION)
         self.persist_directory = kwargs.get("persist_directory", CHROMA_PERSIST_DIR)
@@ -170,8 +171,8 @@ class RAGAgent:
                 self.llm = ChatVertexAI(
                     project=PROJECT_ID,
                     location=REGION,
-                    model="gemini-2.5-pro",
-                    temperature=self.temperature
+                    model=self.model_name, # Usar configuración centralizada
+                    temperature=self.temperature # Usar configuración centralizada
                 )
             
             retriever = vectorstore.as_retriever(
@@ -390,8 +391,8 @@ Comienza:
                 self.llm = ChatVertexAI(
                     project=PROJECT_ID,
                     location=REGION,
-                    model="gemini-2.5-pro",
-                    temperature=self.temperature
+                    model=self.model_name, # Usar configuración centralizada
+                    temperature=self.temperature # Usar configuración centralizada
                 )
             
             agent = create_react_agent(

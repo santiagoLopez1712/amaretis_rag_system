@@ -1,4 +1,4 @@
-# supervisor.py (Versión optimizada como "Orquestador y Conversacionalista")
+# supervisor.py (Refactorizado para configuración centralizada)
 
 import os
 import re
@@ -18,11 +18,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import Runnable
 
-# --- Importaciones de Agentes ---
+# --- Importaciones de Agentes (Clases en lugar de instancias) ---
 from rag_agent import create_amaretis_rag_agent
-from web_such_agent import research_agent
+from web_such_agent import WebSearchAgent # Importamos la clase
 from compliance_agent import ComplianceAgent
-from data_analysis_agent import agent as data_analysis_agent
+from data_analysis_agent import DataAnalysisAgent # Importamos la clase
 from brief_generator_agent import BriefGeneratorAgent
 from integrated_marketing_agent import create_integrated_marketing_agent
 
@@ -48,7 +48,12 @@ class AgentState(TypedDict):
 class SupervisorManager:
 
     def __init__(self):
-        self.llm = ChatVertexAI(project=PROJECT_ID, model="gemini-2.5-pro", temperature=0.7)
+        # --- Configuración Centralizada del Modelo ---
+        self.model_name = "gemini-2.5-pro"
+        self.llm_temperature = 0.7
+        self.llm_router_temperature = 0.2 # Temperatura más baja para el router para ser más determinista
+
+        self.llm = ChatVertexAI(project=PROJECT_ID, model=self.model_name, temperature=self.llm_router_temperature)
         self.history: List[Dict[str, str]] = []
         self.agents = {}
         self.agent_names = []
@@ -59,26 +64,33 @@ class SupervisorManager:
         self.setup_supervisor()
 
     def setup_agents(self):
-        """Inicializa todos los agentes y establece sus nombres."""
+        """Inicializa todos los agentes y establece sus nombres, pasando la configuración del LLM."""
         try:
-            rag_agent_instance, self.rag_vectorstore = create_amaretis_rag_agent(debug=False)
+            # Cada agente ahora recibe la configuración del modelo
+            rag_agent_instance, self.rag_vectorstore = create_amaretis_rag_agent(
+                debug=False, model_name=self.model_name, temperature=self.llm_temperature
+            )
             if not rag_agent_instance: raise ValueError("Fallo al inicializar rag_agent.")
             self.agents[rag_agent_instance.name] = rag_agent_instance
 
-            compliance_agent_instance = ComplianceAgent()
+            compliance_agent_instance = ComplianceAgent(model_name=self.model_name, temperature=self.llm_temperature)
             self.agents[compliance_agent_instance.name] = compliance_agent_instance
 
-            brief_agent_instance = BriefGeneratorAgent(vectorstore=self.rag_vectorstore)
+            brief_agent_instance = BriefGeneratorAgent(
+                vectorstore=self.rag_vectorstore, model_name=self.model_name, temperature=self.llm_temperature
+            )
             self.agents[brief_agent_instance.name] = brief_agent_instance
             
-            integrated_agent_instance = create_integrated_marketing_agent(vectorstore=self.rag_vectorstore)
+            integrated_agent_instance = create_integrated_marketing_agent(
+                vectorstore=self.rag_vectorstore, model_name=self.model_name, temperature=self.llm_temperature
+            )
             self.agents[integrated_agent_instance.name] = integrated_agent_instance
             
-            if not hasattr(research_agent, 'name'): research_agent.name = "research_agent"
-            self.agents[research_agent.name] = research_agent
+            research_agent_instance = WebSearchAgent(model_name=self.model_name, temperature=self.llm_temperature)
+            self.agents[research_agent_instance.name] = research_agent_instance
             
-            if not hasattr(data_analysis_agent, 'name'): data_analysis_agent.name = "data_analysis_agent"
-            self.agents[data_analysis_agent.name] = data_analysis_agent
+            data_analysis_agent_instance = DataAnalysisAgent(model_name=self.model_name, temperature=self.llm_temperature)
+            self.agents[data_analysis_agent_instance.name] = data_analysis_agent_instance
             
             self.agent_names = list(self.agents.keys())
             logger.info(f"Agentes inicializados: {self.agent_names}")
@@ -141,7 +153,6 @@ class SupervisorManager:
         logger.info("Pregunta compleja detectada. Usando el LLM-Router...")
         available_agents = ", ".join(self.agent_names)
         
-        # --- PROMPT MEJORADO CON REGLA DE PRIORIDAD ---
         supervisor_prompt_text = (
             "Eres el supervisor central de AMARETIS. Tu tarea es enrutar la pregunta del usuario al agente más apropiado.\n\n"
             "**REGLA DE PRIORIDAD MÁXIMA:** Si la pregunta del usuario contiene frases como 'según el documento', 'en el archivo', 'basado en el PDF' o menciona un archivo subido, DEBES enrutarla SIEMPRE al `rag_agent`.\n\n"
@@ -281,6 +292,3 @@ class SupervisorManager:
         self.history.append({"role": "assistant", "content": answer})
         if len(self.history) > 20:
             self.history = self.history[-20:]
-
-if __name__ == "__main__":
-    supervisor = SupervisorManager()
