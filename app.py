@@ -69,8 +69,11 @@ class AmaretisWebApp:
             return history, "", None, None
 
         try:
-            answer_text, source, image_path = self.supervisor.process_question(augmented_input)
+            # Ahora pasamos el historial al supervisor
+            answer_text, source, image_path = self.supervisor.process_question(augmented_input, history)
             formatted_answer = f"{answer_text}\n\n📚 *Fuente: {source}*"
+            
+            # Gradio con type="messages" maneja el historial
             history.append({"role": "user", "content": user_input})
             history.append({"role": "assistant", "content": formatted_answer})
             return history, "", image_path, None
