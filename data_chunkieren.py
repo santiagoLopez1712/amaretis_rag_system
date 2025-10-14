@@ -195,6 +195,7 @@ def process_with_batching(json_path, incremental=True, clear_db=False):
             logger.info(f"🔄 Modo RECREAR activado (se borrará DB anterior)")
             logger.info(f"   Chunks a procesar: {len(chunks)}")
             
+            db = None
             for i in range(0, len(chunks), BATCH_SIZE):
                 batch = chunks[i:i+BATCH_SIZE]
                 batch_num = (i // BATCH_SIZE) + 1
