@@ -1,4 +1,4 @@
-# integrated_marketing_agent.py (Versión con DummyRetriever corregido)
+# integrated_marketing_agent.py (Refactorizado para configuración centralizada)
 
 import os
 import logging
@@ -20,15 +20,16 @@ REGION = os.getenv("GOOGLE_CLOUD_REGION")
 if not REGION:
     raise ValueError("La variable de entorno GOOGLE_CLOUD_REGION no está configurada.")
 
-def create_marketing_pipeline(vectorstore: Optional[Any]) -> Runnable:
+def create_marketing_pipeline(vectorstore: Optional[Any], model_name: str, temperature: float) -> Runnable:
     """Crea la cadena de LangChain para la estrategia de marketing."""
     llm = ChatVertexAI(
-        project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=0.8
+        project=PROJECT_ID, 
+        location=REGION, 
+        model=model_name, # Usar configuración centralizada
+        temperature=temperature
     )
 
     if not vectorstore:
-        # --- CORRECCIÓN CLAVE ---
-        # El DummyRetriever ahora es una función compatible con LCEL (RunnableLambda)
         def dummy_retriever_func(query: str):
             logger.warning("Vectorstore no proporcionado, el contexto de búsqueda estará vacío.")
             return []
@@ -77,8 +78,8 @@ class IntegratedMarketingAgent:
     """
     name = "integrated_marketing_agent"
 
-    def __init__(self, vectorstore: Optional[Any]):
-        self.pipeline: Runnable = create_marketing_pipeline(vectorstore)
+    def __init__(self, vectorstore: Optional[Any], model_name: str, temperature: float):
+        self.pipeline: Runnable = create_marketing_pipeline(vectorstore, model_name, temperature)
 
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Punto de entrada para LangGraph que pasa correctamente el historial."""
@@ -94,6 +95,6 @@ class IntegratedMarketingAgent:
             logger.error(f"Error en la invocación del Integrated Marketing Agent: {e}")
             return {"output": f"Error técnico en el agente de marketing integrado: {e}"}
 
-def create_integrated_marketing_agent(vectorstore: Optional[Any]) -> IntegratedMarketingAgent:
+def create_integrated_marketing_agent(vectorstore: Optional[Any], model_name: str, temperature: float) -> IntegratedMarketingAgent:
     """Función de fábrica para crear una instancia del agente."""
-    return IntegratedMarketingAgent(vectorstore)
+    return IntegratedMarketingAgent(vectorstore, model_name, temperature)

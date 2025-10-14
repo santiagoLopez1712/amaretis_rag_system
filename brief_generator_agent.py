@@ -1,4 +1,4 @@
-# brief_generator_agent.py (Versión final con Vertex AI y memoria corregida)
+# brief_generator_agent.py (Refactorizado para configuración centralizada)
 
 import os
 import logging
@@ -25,8 +25,13 @@ if not REGION:
 class BriefGeneratorAgent:
     name = "brief_generator_agent"
     
-    def __init__(self, vectorstore, temperature: float = 0.7):
-        self.llm = ChatVertexAI(project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=temperature)
+    def __init__(self, vectorstore, model_name: str = "gemini-2.5-pro", temperature: float = 0.7):
+        self.llm = ChatVertexAI(
+            project=PROJECT_ID, 
+            location=REGION, 
+            model=model_name, # Usar configuración centralizada
+            temperature=temperature
+        )
         self.vectorstore = vectorstore
         self.tools = self._setup_tools()
         self.agent: Optional[AgentExecutor] = self._create_agent()
@@ -171,7 +176,3 @@ class BriefGeneratorAgent:
         except Exception as e:
             logger.error(f"Error en la invocación del Brief Generator Agent: {e}")
             return {"output": f"Fehler bei Brief-Generierung: {e}"}
-
-def create_brief_generator_agent(vectorstore) -> BriefGeneratorAgent:
-    """Función de fábrica para crear una instancia del agente."""
-    return BriefGeneratorAgent(vectorstore)

@@ -1,4 +1,4 @@
-# compliance_agent.py (Versión final con Vertex AI y memoria corregida)
+# compliance_agent.py (Refactorizado para configuración centralizada)
 
 import os
 import re
@@ -28,11 +28,11 @@ class ComplianceAgent:
     """
     name = "compliance_agent" 
     
-    def __init__(self, temperature: float = 0.3):
+    def __init__(self, model_name: str = "gemini-2.5-pro", temperature: float = 0.3):
         self.llm = ChatVertexAI(
             project=PROJECT_ID,
             location=REGION,
-            model="gemini-2.5-pro",
+            model=model_name, # Usar configuración centralizada
             temperature=temperature
         )
         self.tools = self._setup_tools()
@@ -230,24 +230,3 @@ class ComplianceAgent:
             logger.error(f"Error bei der Ausführung des Compliance Agent: {e}")
             return {"output": f"Fehler bei der Compliance-Prüfung: {e}"}
 
-    def audit_content(self, content: str, content_type: str = "marketing") -> str:
-        """Führt eine vollständige Compliance-Prüfung für einen gegebenen Inhalt durch."""
-        audit_request = f"""
-        Bitte führe eine vollständige Compliance-Prüfung für den folgenden Inhalt durch:
-        
-        CONTENT-TYP: {content_type}
-        INHALT: "{content}"
-        
-        Prüfe auf:
-        1. DSGVO/GDPR-Risiken (personenbezogene Daten).
-        2. Marketing-Compliance-Risiken (UWG).
-        3. Relevante Datenaufbewahrungsrichtlinien.
-        
-        Gib eine klare Zusammenfassung und umsetzbare Empfehlungen.
-        """
-        result_dict = self.invoke({"input": audit_request, "history": []})
-        return result_dict.get("output", "Fehler bei der Durchführung des Audits.")
-
-def create_compliance_agent() -> ComplianceAgent:
-    """Erstellt eine Instanz des Compliance Agent."""
-    return ComplianceAgent()

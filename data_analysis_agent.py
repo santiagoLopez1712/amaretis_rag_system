@@ -1,4 +1,4 @@
-# data_analysis_agent.py (Refactorizado con LangChain y Vertex AI)
+# data_analysis_agent.py (Refactorizado para seguridad y configuración centralizada)
 
 import os
 import re
@@ -31,8 +31,13 @@ if not REGION:
 class DataAnalysisAgent:
     name = "data_analysis_agent"
 
-    def __init__(self, temperature: float = 0.5):
-        self.llm = ChatVertexAI(project=PROJECT_ID, location=REGION, model="gemini-2.5-pro", temperature=temperature)
+    def __init__(self, model_name: str = "gemini-2.5-pro", temperature: float = 0.5):
+        self.llm = ChatVertexAI(
+            project=PROJECT_ID, 
+            location=REGION, 
+            model=model_name, # Usar configuración centralizada
+            temperature=temperature
+        )
         self.tools = self._setup_tools()
         self.agent: Optional[AgentExecutor] = self._create_agent()
 
@@ -184,4 +189,5 @@ class DataAnalysisAgent:
             logger.error(f"Error en la invocación del Data Analysis Agent: {e}")
             return {"output": f"Error en el agente de análisis de datos: {e}"}
 
-agent = DataAnalysisAgent()
+# La instancia global se elimina para que el supervisor pueda crearla con la configuración centralizada.
+# agent = DataAnalysisAgent()

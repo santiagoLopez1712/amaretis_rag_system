@@ -1,4 +1,4 @@
-# web_such_agent.py (Versión final "Analista de Investigación de Élite")
+# web_such_agent.py (Refactorizado para configuración centralizada)
 
 import os
 import logging
@@ -27,11 +27,11 @@ if not REGION:
 class WebSearchAgent:
     name = "research_agent"
 
-    def __init__(self, temperature: float = 0.5):
+    def __init__(self, model_name: str = "gemini-2.5-pro", temperature: float = 0.5):
         self.llm = ChatVertexAI(
             project=PROJECT_ID,
             location=REGION,
-            model="gemini-2.5-pro", 
+            model=model_name, # Usar configuración centralizada
             temperature=temperature
         )
         self.tools = self._setup_tools()
@@ -148,12 +148,15 @@ class WebSearchAgent:
             logger.error(f"Error en la invocación del Web Search Agent: {e}")
             return {"output": f"Fehler bei der Web-Recherche: {e}"}
 
-research_agent = WebSearchAgent()
+# La instancia global se elimina para que el supervisor pueda crearla con la configuración centralizada.
+# research_agent = WebSearchAgent()
 
 if __name__ == "__main__":
     print("🔍 Web Search Agent Test (Analista de Investigación de Élite)")
+    # Para testing, creamos una instancia local
+    local_research_agent = WebSearchAgent()
     question = "cuales son las 3 empresas de IA más importantes y por qué"
     
-    response_dict = research_agent.invoke({"input": question})
+    response_dict = local_research_agent.invoke({"input": question})
     
     print(f"\nRespuesta del Agente:\n{response_dict.get('output')}")
