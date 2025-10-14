@@ -2,34 +2,49 @@ import os
 import pdfplumber
 import json
 import sys
-from io import StringIO # Necesario para suprimir las advertencias de pdfminer.six
+import logging
+from io import StringIO
+
+
+# CONFIGURACIÓN DE LOGGING
+
+# Suprimir advertencias de pdfminer (Cannot set gray...)
+logging.getLogger('pdfminer').setLevel(logging.ERROR)
+logging.getLogger('pdfminer.pdfinterp').setLevel(logging.ERROR)
+
+# Suprimir otros logs innecesarios
+logging.getLogger('urllib3').setLevel(logging.ERROR)
+logging.getLogger('PIL').setLevel(logging.ERROR)
 
 def extract_tables_from_directory_to_json(directory, output_path):
+    """Extrae tablas y texto de PDFs en un directorio y los guarda en JSON"""
     extracted_data = []
 
-    # 1. Función auxiliar para procesar un solo archivo PDF
     def process_pdf(file_path, company_name):
+        """Procesa un único archivo PDF"""
         file_extracted_data = []
         
-        # --- Bloque de supresión de advertencias (Cannot set gray...) ---
-        # 1. Guardar la salida estándar de errores original
+        # Guardar stderr original para suprimir advertencias de pdfminer
         original_stderr = sys.stderr
-        # 2. Redirigir los errores a un objeto en memoria (StringIO) para suprimirlos
         sys.stderr = StringIO()
         
         try:
             with pdfplumber.open(file_path) as pdf:
                 for page_num, page in enumerate(pdf.pages):
-                    
                     # Intentar extraer tablas
                     tables = page.extract_tables()
+                    
                     if tables:
-                        # Usamos la impresión para mostrar el progreso, ya que no es una advertencia
-                        print(f"📄 {file_path} - Seite {page_num + 1}: {len(tables)} Tabellen gefunden")
+                        # Restaurar stderr temporalmente para mostrar progreso
+                        sys.stderr = original_stderr
+                        print(f"📄 {os.path.basename(file_path)} - Seite {page_num + 1}: {len(tables)} Tabellen gefunden")
+                        sys.stderr = StringIO()
+                        
                         for table_idx, table in enumerate(tables):
                             # Formatear la tabla
                             text = "\n".join([
-                                " | ".join([cell if cell else "" for cell in row]) for row in table
+                                " | ".join([cell if cell else "" for cell in row]) 
+                                for row in table
                             ])
                             file_extracted_data.append({
                                 "type": "table",
@@ -39,8 +54,8 @@ def extract_tables_from_directory_to_json(directory, output_path):
                                 "table_index": table_idx,
                                 "content": text
                             })
-                    # Extraer texto si no hay tablas
                     else:
+                        # Extraer texto si no hay tablas
                         text = page.extract_text()
                         if text:
                             file_extracted_data.append({
@@ -50,36 +65,33 @@ def extract_tables_from_directory_to_json(directory, output_path):
                                 "page": page_num + 1,
                                 "content": text
                             })
+            
             return file_extracted_data
             
         except Exception as e:
-            # Restablecer stderr para que nuestro mensaje de error sea visible
-            sys.stderr = original_stderr 
-            print(f"❌ Fehler al procesar {file_path}: {e}")
+            sys.stderr = original_stderr
+            print(f"❌ Fehler beim Verarbeiten von {os.path.basename(file_path)}: {e}")
             return []
             
         finally:
-            # Asegurar que stderr se restablezca siempre
-            sys.stderr = original_stderr 
+            sys.stderr = original_stderr
 
-    # 2. Iterar sobre todos los archivos y subdirectorios (usando os.walk)
+    # Iterar sobre todos los archivos y subdirectorios
     for root, dirs, files in os.walk(directory):
-        # Usar el nombre de la carpeta como 'company'
         company_name = os.path.basename(root) if root != directory else "root"
         
         for filename in files:
             if filename.lower().endswith(".pdf"):
                 file_path = os.path.join(root, filename)
-                
-                # Procesar el PDF y añadir los resultados
+                print(f"🔄 Verarbeitungsdatei: {filename}...")
                 data = process_pdf(file_path, company_name)
                 extracted_data.extend(data)
 
-    # 3. Guardar el resultado final
+    # Guardar el resultado final
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(extracted_data, f, indent=2, ensure_ascii=False)
 
-    print(f"✅ {len(extracted_data)} Datensätze fueron guardados en: {output_path}")
+    print(f"\n✅ {len(extracted_data)} Datensätze wurden in '{output_path}' gespeichert")
 
 
 if __name__ == "__main__":
