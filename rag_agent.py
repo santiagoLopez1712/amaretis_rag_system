@@ -404,7 +404,7 @@ Comienza:
             executor = AgentExecutor(
                 agent=agent,
                 tools=tools,
-                verbose=self.debug,
+                verbose=True,
                 handle_parsing_errors=True,
                 max_iterations=5,
                 max_execution_time=60
