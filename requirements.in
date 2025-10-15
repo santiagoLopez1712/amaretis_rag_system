@@ -4,6 +4,8 @@
 # ===== CORE =====
 python-dotenv
 requests
+PyYAML
+beautifulsoup4
 
 # ===== DATA PROCESSING =====
 pandas
@@ -19,6 +21,7 @@ pdfplumber
 # versiones compatibles de langchain-core, -text-splitters, etc.
 langchain
 langchain-community
+langchain-experimental
 langgraph
 langchain-google-genai
 langchain-google-vertexai
@@ -29,6 +32,7 @@ langchain-huggingface
 sentence-transformers
 huggingface-hub
 chromadb
+transformers!=4.57.0  # Evitar la versión "yanked"
 
 # ===== WEB SEARCH =====
 tavily-python
