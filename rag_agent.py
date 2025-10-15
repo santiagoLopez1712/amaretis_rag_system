@@ -342,17 +342,14 @@ class RAGAgent:
         
         # Herramienta 1: Búsqueda en documentos
         if vectorstore:
-            qa_chain = self._create_qa_chain(vectorstore)
-            if qa_chain:
-                tools.append(Tool(
-                    name="document_search",
-                    func=lambda query: self._safe_qa_invoke(qa_chain, query),
-                    description=(
-                        "Busca información en la base de conocimiento de AMARETIS. "
-                        "Usa esta herramienta para responder preguntas sobre documentos, "
-                        "políticas, procedimientos y datos de la empresa."
-                    )
-                ))
+            tools.append(Tool(
+                name="document_search",
+                func=self._tool_get_raw_documents,
+                description=(
+                    "Busca y devuelve fragmentos de documentos de la base de conocimiento de AMARETIS. "
+                    "Usa esta herramienta para obtener el contexto necesario para responder preguntas sobre la empresa."
+                )
+            ))
         
         # Herramienta 2: Búsqueda en PDF subidos
         tools.append(Tool(
