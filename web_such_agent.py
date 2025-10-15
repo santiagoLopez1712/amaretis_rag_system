@@ -37,19 +37,29 @@ class WebSearchAgent:
         self.tools = self._setup_tools()
         self.agent: Optional[AgentExecutor] = self._create_agent()
 
-    def _tool_search(self, query: str) -> str:
+    def _tool_search(self, query: str | dict) -> str:
         """Realiza una búsqueda web y devuelve una lista de URLs y títulos."""
         try:
+            # Robustez: si el input es un dict (por error de parseo del LLM), extraer la query.
+            if isinstance(query, dict):
+                query = query.get('query', '')
+            
+            if not isinstance(query, str) or not query:
+                return "Error: La consulta de búsqueda debe ser un texto no vacío."
+
             search = TavilySearch(max_results=7)
-            results = search.invoke(query)
+            results = search.invoke(query) # Esto devuelve una lista de objetos Document
+
             if not results:
                 return "No se encontraron resultados de búsqueda."
+
+            # El resultado 'r' es un objeto Document, la información está en 'metadata'.
             return "\n".join([
-                f"[Fuente {i+1}: {r.get('url')}] Título: {r.get('title')}"
+                f"[Fuente {i+1}: {r.metadata.get('url')}] Título: {r.metadata.get('title')}"
                 for i, r in enumerate(results)
             ])
         except Exception as e:
-            logger.error(f"Error en la herramienta de búsqueda: {e}")
+            logger.error(f"Error en la herramienta de búsqueda: {e}", exc_info=True)
             return f"Error durante la búsqueda web: {e}"
 
     def _tool_scrape(self, url: str) -> str:
