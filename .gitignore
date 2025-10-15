@@ -60,6 +60,8 @@ data/*.csv
 figures/*.png
 figures/*.jpg
 figures/*.svg
+docstore/*
+rag_logs/*
 
 # ===== IDE =====
 .vscode/
