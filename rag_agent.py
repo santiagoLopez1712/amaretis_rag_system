@@ -314,6 +314,25 @@ class RAGAgent:
                 f"Por favor, verifica que el archivo no esté corrupto."
             )
 
+    def _tool_get_raw_documents(self, query: str) -> str:
+        """Una herramienta simple que solo recupera documentos crudos del vectorstore."""
+        try:
+            if not self.vectorstore:
+                return "Error: La base de conocimiento no está disponible."
+            
+            retrieved_docs = self.vectorstore.similarity_search(query, k=self.retrieval_k)
+            
+            if not retrieved_docs:
+                return "No se encontraron documentos relevantes para la consulta."
+                
+            # Formatear los documentos para la observación del agente
+            context_str = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
+            return context_str
+            
+        except Exception as e:
+            logger.error(f"Error en la recuperación de documentos: {e}", exc_info=True)
+            return f"Error al buscar en la base de datos: {e}"
+
     def setup_tools(self, vectorstore: Optional[Chroma] = None) -> List[Tool]:
         """Configura las herramientas del agente"""
         tools = []
