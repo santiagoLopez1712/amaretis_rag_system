@@ -1,169 +1,183 @@
-# 🎯 AMARETIS Marketing Intelligence System  
-*Multi-Agent RAG Platform for Strategic Marketing – Göttingen, Germany*  
+# 🎯 AMARETIS Marketing Intelligence System
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![LangChain](https://img.shields.io/badge/LangChain-Integrated-orange)
-![Gemini](https://img.shields.io/badge/LLM-Gemini--1.5--Pro-yellow)
-![Gradio](https://img.shields.io/badge/UI-Gradio-lightgrey)
-![License](https://img.shields.io/badge/License-MIT-green)
+## 🌍 Overview
+**AMARETIS** is a multi-agent AI system designed in Göttingen (Germany) to support marketing teams and decision-makers in tasks such as campaign planning, compliance validation, data analysis, and RAG-based knowledge management.
 
----
-
-## 🧠 Overview | Descripción General
-
-**AMARETIS Marketing Intelligence System** es una plataforma de inteligencia artificial **multi-agente** que combina razonamiento estratégico, recuperación aumentada por generación (RAG) y análisis de datos automatizado.  
-Desarrollada en **Göttingen, Alemania**, su objetivo es ofrecer soporte inteligente para campañas de marketing, compliance legal y análisis de información empresarial.  
-
-> The system is designed as a modular AI architecture where each agent specializes in a different cognitive function — from research and compliance to RAG-based question answering.
+The system combines advanced LLM orchestration (via **LangGraph** and **LangChain**) with specialized AI agents — each trained for a distinct domain — all coordinated by a central **SupervisorManager**.  
+It integrates **retrieval-augmented generation (RAG)**, **compliance auditing**, and **automated brief generation** into a unified intelligent assistant.
 
 ---
 
-## 🧩 System Architecture | Arquitectura del Sistema
+## 🧠 Architecture
 
-┌──────────────────────────┐
-│ Gradio Frontend │ ← (User Interface)
-└────────────┬─────────────┘
-│
-┌────────────▼────────────┐
-│ 🧭 SupervisorManager │ ← Orquestador de agentes
-└────────────┬────────────┘
-│
-┌───────────┼────────────────────────────────────────┐
-│ │
-▼ ▼
-🧠 RAG Agent (rag_agent) 📊 Data Analysis Agent
+### Agent Ecosystem
 
-Respuestas con fuentes - Análisis y visualización segura
-
-Búsqueda en vectorstore (Chroma / FAISS) - Genera gráficos con UUID únicos
-│
-▼
-💡 Integrated Marketing Agent
-
-Estratega de campañas
-
-Toma contexto y historial
-│
-▼
-🧾 Brief Generator Agent
-
-Planificador táctico de briefings
-│
-▼
-⚖️ Compliance Agent
-
-Analiza riesgos legales con reglas + LLM
-│
-▼
-🌐 Web Search Agent
-
-Investigación online con citas verificables
-
-yaml
-Code kopieren
+| Agent | Role | Description |
+|--------|------|-------------|
+| 🧩 **SupervisorManager** | Orchestrator | Routes user queries intelligently to the appropriate specialized agent via LangGraph. |
+| 📚 **RAG Agent** | Knowledge Retrieval | Executes context-aware QA over stored knowledge bases and uploaded documents using Chroma or FAISS. |
+| 📊 **Data Analysis Agent** | Data Scientist | Analyzes CSV/XLSX/PDF data, generating safe Python visualizations in sandboxed environments. |
+| ⚖️ **Compliance Agent** | Legal & Governance Expert | Checks GDPR, UWG, and data retention compliance using hybrid rules + LLM reasoning. |
+| 📝 **Brief Generator Agent** | Marketing Planner | Produces structured, strategic briefs with segmentation, SMART goals, and creative guidance. |
+| 🌐 **Web Search Agent** | Research Analyst | Performs multi-step online research with source citations using TavilySearch and web scraping. |
+| 💼 **Integrated Marketing Agent** | Strategic Synthesizer | Provides high-level marketing strategy and synthesis across all agents’ outputs. |
 
 ---
 
-## 🚀 Key Features | Características Principales
+## 🧩 System Flow
 
-- **Multi-Agente Orquestado:** coordinación automática por el `SupervisorManager`.
-- **Arquitectura RAG Completa:** integración con Chroma y embeddings de HuggingFace.
-- **Análisis de Datos Seguro:** ejecución aislada (sandbox o REPL) sin vulnerabilidades.
-- **Compliance Inteligente:** reglas externas y razonamiento jurídico basado en IA.
-- **Interfaz Amigable (Gradio):** chat interactivo con carga de PDF, CSV y Excel.
-- **Citas y Transparencia:** cada respuesta incluye referencias a sus fuentes.
+1. **User Interaction via Gradio UI**
+   - Users upload files (PDF, CSV, Excel) or ask questions directly.
+   - Input is processed and augmented with file-based instructions.
+
+2. **SupervisorManager**
+   - Routes the question to the appropriate agent (e.g., Compliance, Data Analysis, RAG).
+   - Maintains conversational context and executes the selected agent’s chain.
+
+3. **Specialized Agents**
+   - Each agent operates autonomously and returns structured outputs with citations or sources.
+
+4. **Output Rendering**
+   - Results (text, charts, insights) are displayed in the **Gradio Interface**, including document references.
 
 ---
 
-## ⚙️ Installation | Instalación
+## 🛡️ Security & Reliability
 
+### ✅ Addressed Issues
+| Category | Problem | Resolution |
+|-----------|----------|-------------|
+| **Security** | Remote code execution (use of `exec`) | Replaced with **sandboxed PythonREPL** execution. |
+| **Concurrency** | Overwriting charts (`plot.png`) | Added **UUID-based unique filenames**. |
+| **Consistency** | Model names hardcoded | Centralized LLM configuration (`gemini-1.5-pro`) in Supervisor. |
+| **Compliance Rules** | Hardcoded regex/recommendations | Moved to external YAML configuration. |
+| **Conversation Context** | Ignored by some agents | Integrated history context into ReAct and LCEL chains. |
+
+---
+
+## 🧰 Tech Stack
+
+| Layer | Technology |
+|-------|-------------|
+| **Frontend** | Gradio |
+| **Core Framework** | LangChain, LangGraph |
+| **Vector Databases** | ChromaDB, FAISS (in-memory) |
+| **LLMs** | Google Gemini 1.5 Pro / Flash |
+| **Backend** | Python 3.10+ |
+| **Visualization** | Matplotlib, Pandas |
+| **Search APIs** | TavilySearch, WebScraper Tools |
+
+---
+
+## ⚙️ Setup Instructions
+
+### 1️⃣ Clone the Repository
 ```bash
 git clone https://github.com/santiagoLopez1712/amaretis_rag_system.git
 cd amaretis_rag_system
+```
+
+### 2️⃣ Create a Virtual Environment
+```bash
+python -m venv venv
+source venv/bin/activate   # On Linux/Mac
+venv\Scripts\activate    # On Windows
+```
+
+### 3️⃣ Install Dependencies
+```bash
 pip install -r requirements.txt
-Crea un archivo .env en la raíz del proyecto con tus claves de API:
+```
 
-bash
-Code kopieren
-GOOGLE_API_KEY=tu_clave_gemini
-TAVILY_API_KEY=tu_clave_tavily
-▶️ Running the App | Ejecución de la Aplicación
-bash
-Code kopieren
+### 4️⃣ Configure Environment Variables
+Create a `.env` file with your API keys:
+```bash
+GOOGLE_API_KEY=your_google_api_key
+TAVILY_API_KEY=your_tavily_api_key
+```
+
+### 5️⃣ Launch the App
+```bash
 python app.py --port 7860
-Luego abre en tu navegador:
+```
+The web app will open automatically at [http://localhost:7860](http://localhost:7860)
 
-arduino
-Code kopieren
-http://localhost:7860
-🔐 Security & Robustness | Seguridad y Robustez
-✅ Sandboxed Execution: el agente de análisis ejecuta código en entorno seguro (sin exec).
-✅ Unique Filenames: generación de gráficos con nombres UUID, evitando conflictos concurrentes.
-✅ External Configs: reglas de compliance y parámetros de LLM se gestionan desde archivos JSON/YAML.
-✅ Centralized Model Setup: todos los agentes usan la configuración unificada del modelo gemini-1.5-pro.
+---
 
-🧠 Agents Overview | Descripción de Agentes
-Agente	Rol Principal	Tecnologías Clave
-rag_agent.py	Recuperación y respuestas con contexto + citas	LangChain, Chroma, HuggingFace
-integrated_marketing_agent.py	Estrategia de marketing contextual	LCEL, Prompt Design
-brief_generator_agent.py	Generación de briefings estructurados	ReAct Agent, Tools
-compliance_agent.py	Análisis legal con reglas + IA	Regex, LLM, YAML Config
-data_analysis_agent.py	Análisis de datos y visualización segura	Pandas, Matplotlib, Sandbox
-web_such_agent.py	Búsqueda y síntesis web con fuentes	TavilySearch, Web Scraping
-supervisor_main.py	Orquestador principal de agentes	LangGraph, Routing dinámico
-data_loader.py / data_chunkieren.py	Procesamiento de documentos	PyPDF, Text Chunking
-app.py	Interfaz con Gradio	UI + File Upload
+## 📈 Example Workflow
 
-💾 Data Flow | Flujo de Datos
-📥 Carga y procesamiento: data_loader extrae y limpia los documentos.
+1. Upload a **marketing report** (`.pdf`) → The **RAG Agent** extracts and summarizes key findings.  
+2. Ask: *“¿Cumple esta campaña con el DSGVO y la UWG?”* → The **Compliance Agent** evaluates it and generates recommendations.  
+3. Request: *“Crea un brief estratégico basado en este contenido.”* → The **Brief Generator** builds a complete marketing brief with SMART goals.  
+4. Analyze uploaded **CSV** → The **Data Analysis Agent** creates charts and insights safely.  
 
-🔍 Segmentación: data_chunkieren divide textos para embeddings.
+---
 
-🧬 Vectorización: creación de Chroma o FAISS en memoria.
+## 🧩 Modular Expansion
 
-💡 Consulta: el rag_agent busca la respuesta más relevante.
+You can easily extend AMARETIS by adding new agents following the pattern:
+```python
+from langchain.agents import Tool
+from langchain_core.prompts import ChatPromptTemplate
 
-🧩 Supervisor: decide qué agente manejará la solicitud.
+class NewAgent:
+    def __init__(self, llm):
+        self.llm = llm
+        self.tools = [Tool(name="my_tool", func=self.my_func, description="...")]
+```
 
-🖼️ Salida: app.py muestra texto, imagen o gráfico en la interfaz Gradio.
+Then register it in `supervisor_main.py` for routing.
 
-🧭 Example Interaction | Ejemplo de Interacción
-Usuario:
+---
 
-“Analiza este PDF y dime qué estrategias de marketing aplicaron para fidelizar clientes.”
+## 🧪 Testing
+To verify each module individually:
+```bash
+python run_demo.py
+```
 
-Asistente:
+---
 
-“El documento muestra tres enfoques clave: programas de puntos, comunicación omnicanal y personalización dinámica.
+## 🧩 Folder Structure
+```
+amaretis_rag_system/
+│
+├── app.py                  # Gradio web interface
+├── supervisor_main.py      # LangGraph orchestration
+├── rag_agent.py            # RAG retrieval agent
+├── compliance_agent.py     # Compliance & GDPR checker
+├── data_analysis_agent.py  # Data visualization and analysis
+├── brief_generator_agent.py# Brief generation agent
+├── integrated_marketing_agent.py # Strategic synthesis
+├── web_such_agent.py       # Web research agent
+├── tools.py                # Shared utilities
+├── data_loader.py          # Dataset preparation
+├── data_chunkieren.py      # Text chunking logic
+├── requirements.txt
+└── .gitignore
+```
 
-📚 Fuente: kampagnenbericht_q2.pdf, páginas 3–5”
+---
 
-🔮 Future Enhancements | Mejoras Futuras
-Integración de FAISS en memoria para análisis de PDFs más rápidos.
+## 📚 References
+- [LangChain Documentation](https://python.langchain.com/docs/)
+- [LangGraph Docs](https://langchain-ai.github.io/langgraph/)
+- [Gradio Interface](https://www.gradio.app/)
+- [Google Gemini API](https://ai.google.dev/)
+- [Tavily Search API](https://tavily.com/)
 
-Persistencia del historial de conversación entre sesiones.
+---
 
-Modo multiusuario concurrente con gestión de sesiones aisladas.
+## 🧑‍💻 Author
+**Santiago López Otálvaro**  
+Developer & AI Specialist — Göttingen, Germany  
+[GitHub Profile](https://github.com/santiagoLopez1712)
 
-Dashboard analítico web para visualización de resultados agregados.
+---
 
-🏢 About AMARETIS | Sobre AMARETIS
-AMARETIS es una agencia creativa en Göttingen, Alemania, especializada en diseño, comunicación estratégica y soluciones de inteligencia artificial aplicadas al marketing.
+## 🪪 License
+MIT License © 2025 Santiago López Otálvaro
 
-Este sistema fue desarrollado como parte del laboratorio interno de IA para optimizar procesos de análisis, planificación y cumplimiento normativo.
+---
 
-👤 Author | Autor
-Santiago López Otálvaro
-Web & AI Specialist · AMARETIS
-📍 Göttingen, Germany
-🌐 github.com/santiagoLopez1712
-
-📄 License
-Este proyecto está licenciado bajo la MIT License.
-Puedes usarlo, modificarlo y adaptarlo libremente con atribución al autor original.
-
-⭐ If you like this project, consider giving it a star on GitHub!
-
-yaml
-Code kopieren
-
+⭐ *If you like this project, give it a star on GitHub!* ⭐
