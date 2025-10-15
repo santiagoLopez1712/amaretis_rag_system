@@ -57,8 +57,7 @@ class AmaretisWebApp:
                 instruction = (
                     f"[Instrucción del sistema: El usuario ha subido el archivo '{permanent_path.as_posix()}'. "
                     f"Para responder la pregunta, DEBES usar la herramienta `uploaded_file_search` con el input: "
-                    f"'{permanent_path.as_posix()}|{user_input}' ]"
-                )
+                    f"'{permanent_path.as_posix()}|{user_input}' ")
             else:
                 instruction = "[Instrucción del sistema: Se ha subido un archivo de tipo no soportado.]"
 
@@ -73,7 +72,7 @@ class AmaretisWebApp:
             answer_text, source, image_path = self.supervisor.process_question(augmented_input, history)
             formatted_answer = f"{answer_text}\n\n📚 *Fuente: {source}*"
             
-            # Gradio con type="messages" maneja el historial
+            # Gradio maneja el historial implícitamente
             history.append({"role": "user", "content": user_input})
             history.append({"role": "assistant", "content": formatted_answer})
             return history, "", image_path, None
@@ -100,8 +99,8 @@ def create_interface(supervisor_instance: Optional[SupervisorManager]) -> gr.Blo
         
         with gr.Row():
             with gr.Column(scale=2):
-                # --- CORRECCIÓN CLAVE: Se añade type="messages" ---
-                chatbot = gr.Chatbot(label="💬 Marketing Assistant", height=600, type="messages")
+                # --- CORRECCIÓN: Se elimina el argumento 'type' obsoleto ---
+                chatbot = gr.Chatbot(label="💬 Marketing Assistant", height=600)
                 msg_input = gr.Textbox(label="Tu Pregunta", placeholder="Sube un archivo y haz una pregunta sobre él...")
                 with gr.Row():
                     send_btn = gr.Button("📤 Enviar", variant="primary")
@@ -134,7 +133,6 @@ if __name__ == "__main__":
         print("🚀 Lanzando la interfaz de AMARETIS...")
         interface = create_interface(supervisor_instance=SUPERVISOR_INSTANCE)
 
-        # --- CORRECCIÓN CLAVE: Se elimina interface.load y se añade inbrowser=True ---
         interface.launch(server_name=args.host, server_port=args.port, inbrowser=True)
     else:
         print("🔴 La aplicación no se lanzará debido a un error fatal en la inicialización.")

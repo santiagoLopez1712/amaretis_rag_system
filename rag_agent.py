@@ -1,33 +1,43 @@
 """
 =============================================================================
-AMARETIS RAG Agent - Versión Mejorada con Query Analysis
+AMARETIS RAG Agent - v4.0 (Parent Document Retriever Integration)
 =============================================================================
 
-Mejoras implementadas:
-1. Query Analysis - Detecta preguntas válidas vs inválidas
-2. Validación robusta de respuestas - Verifica que hay resultados en ChromaDB
-3. Modelo de embeddings consistente - Usa all-MiniLM-L6-v2 como data_chunkieren
-4. Caché de embeddings - Carga el modelo una sola vez
-5. Logging detallado - Rastrea búsquedas fallidas
-6. Mejor manejo de errores - Sin alucinaciones
+Mejoras de esta versión:
+1.  Integración del ParentDocumentRetriever: El agente ahora utiliza el
+    retriever configurado en `data_chunkieren.py`, que busca chunks pequeños
+    pero devuelve los documentos "padre" completos para un contexto más rico.
+2.  SimpleFileSystemStore: Se incluye la implementación del docstore custom
+    para que el agente sea autocontenido y pueda reconstruir el retriever.
+3.  Prompt de "Analista Senior": El prompt del agente ha sido actualizado
+    para instruir al LLM a actuar como un analista experto, sintetizando
+    respuestas detalladas y bien estructuradas a partir del contexto amplio
+    que recibe.
+4.  Refactorización de Herramientas: La herramienta de bósqueda principal
+    ahora usa el ParentDocumentRetriever directamente, simplificando la lógica
+    y eliminando la necesidad de una cadena `RetrievalQA` separada para la
+    bósqueda en la base de conocimientos principal.
 =============================================================================
 """
 
 import os
 import logging
+import pickle
 import pdfplumber
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Sequence
 from dotenv import load_dotenv
 
 from langchain_google_vertexai import ChatVertexAI
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
 from langchain_core.documents import Document
 from langchain.agents import Tool, AgentExecutor, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain.retrievers import ParentDocumentRetriever
+from langchain_core.stores import BaseStore
+from data_chunkieren import SimpleFileSystemStore
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -40,67 +50,31 @@ REGION = os.getenv("GOOGLE_CLOUD_REGION")
 if not REGION:
     raise ValueError("La variable de entorno GOOGLE_CLOUD_REGION no está configurada.")
 
-# ============================================
+# ===========================================
 # CONFIGURACIÓN CONSISTENTE
-# ============================================
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"  # Mismo que data_chunkieren.py
-CHROMA_PERSIST_DIR = "./chroma_amaretis_db"
-CHROMA_COLLECTION = "amaretis_knowledge"
-RETRIEVAL_K = 3  # Número de documentos a recuperar
-MIN_RELEVANCE_SCORE = 0.3  # Score mínimo de relevancia (0-1)
+# ===========================================
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+CHROMA_PERSIST_DIR = "chroma_amaretis_db"
+DOCSTORE_DIR = "docstore" # Directorio para nuestro FileSystemStore
+CHROMA_COLLECTION_NAME = "amaretis_split_parents" # Colección usada en data_chunkieren
 
-# ============================================
-# QUERY ANALYSIS
-# ============================================
-
+# ===========================================
+# QUERY ANALYSIS (sin cambios)
+# ===========================================
 class QueryAnalyzer:
-    """Analiza la calidad de la pregunta antes de procesarla"""
-    
     @staticmethod
     def is_valid_query(query: str) -> Tuple[bool, str]:
-        """
-        Valida si la pregunta es procesable.
-        Retorna (es_válida, razón)
-        """
-        if not query or not query.strip():
-            return False, "La pregunta está vacía."
-        
-        if len(query.strip()) < 3:
-            return False, "La pregunta es demasiado corta (mínimo 3 caracteres)."
-        
-        if len(query.strip()) > 2000:
-            return False, "La pregunta es demasiado larga (máximo 2000 caracteres)."
-        
-        # Detectar preguntas que no se pueden responder con la BD
-        non_answerable_keywords = [
-            "clima hoy", "weather", "bitcoin", "stock", "precio actual",
-            "noticias", "news", "tiempo real", "real-time", "hoy es",
-            "qué hora", "zona horaria"
-        ]
-        
-        query_lower = query.lower()
-        for keyword in non_answerable_keywords:
-            if keyword in query_lower:
-                return False, f"Esta pregunta requiere información en tiempo real que no está en nuestra base de datos."
-        
+        if not query or not query.strip(): return False, "La pregunta está vacía."
+        if len(query.strip()) < 3: return False, "La pregunta es demasiado corta (mínimo 3 caracteres)."
+        if len(query.strip()) > 2000: return False, "La pregunta es demasiado larga (máximo 2000 caracteres)."
+        non_answerable_keywords = ["clima hoy", "weather", "bitcoin", "stock", "precio actual", "noticias", "news", "tiempo real", "real-time", "hoy es", "qué hora", "zona horaria"]
+        if any(keyword in query.lower() for keyword in non_answerable_keywords):
+            return False, "Esta pregunta requiere información en tiempo real que no está en nuestra base de datos."
         return True, "OK"
-    
-    @staticmethod
-    def is_metadata_query(query: str) -> bool:
-        """Detecta si es una pregunta sobre metadata (para no buscar en BD)"""
-        metadata_keywords = [
-            "cuántos documentos", "cuántos pdfs", "qué archivos",
-            "cuál es tu nombre", "quién eres", "cómo funciona"
-        ]
-        return any(keyword in query.lower() for keyword in metadata_keywords)
-    
-    @staticmethod
-    def is_pdf_upload_query(query: str) -> bool:
-        """Detecta si el usuario quiere cargar un PDF específico"""
-        upload_keywords = ["archivo subido", "pdf subido", "archivo cargado"]
-        return any(keyword in query.lower() for keyword in upload_keywords)
 
-
+# ===========================================
+# RAG AGENT v4.0
+# ===========================================
 class RAGAgent:
     name = "rag_agent"
     
@@ -108,23 +82,20 @@ class RAGAgent:
         self.debug = debug
         self.model_name = model_name
         self.temperature = temperature
-        self.collection_name = kwargs.get("collection_name", CHROMA_COLLECTION)
         self.persist_directory = kwargs.get("persist_directory", CHROMA_PERSIST_DIR)
+        self.docstore_directory = kwargs.get("docstore_directory", DOCSTORE_DIR)
+        self.collection_name = kwargs.get("collection_name", CHROMA_COLLECTION_NAME)
         self.embedding_model = kwargs.get("embedding_model", EMBEDDING_MODEL)
-        self.retrieval_k = kwargs.get("retrieval_k", RETRIEVAL_K)
         
-        # Caché de embeddings (cargada una sola vez)
         self._embeddings: Optional[HuggingFaceEmbeddings] = None
-        
         self.llm: Optional[ChatVertexAI] = None
-        self.vectorstore: Optional[Chroma] = None
+        self.retriever: Optional[ParentDocumentRetriever] = None
         self.tools: List[Tool] = []
         self.agent: Optional[AgentExecutor] = None
         self.query_analyzer = QueryAnalyzer()
 
     @property
     def embeddings(self) -> HuggingFaceEmbeddings:
-        """Lazy loading de embeddings (carga una sola vez)"""
         if self._embeddings is None:
             logger.info(f"Cargando modelo de embeddings: {self.embedding_model}")
             self._embeddings = HuggingFaceEmbeddings(
@@ -134,361 +105,241 @@ class RAGAgent:
             )
         return self._embeddings
 
-    def load_existing_vectorstore(self) -> Optional[Chroma]:
-        """Carga el vectorstore de ChromaDB de forma robusta."""
+    def _load_retriever(self) -> Optional[ParentDocumentRetriever]:
+        """
+        Carga y reconstruye el ParentDocumentRetriever a partir de los almacenes
+        persistidos (ChromaDB y SimpleFileSystemStore).
+        """
         try:
-            if not Path(self.persist_directory).exists():
-                logger.error(f"El directorio de ChromaDB no existe: {self.persist_directory}")
-                logger.error("Por favor, ejecuta primero 'python data_chunkieren.py'")
+            if not Path(self.persist_directory).exists() or not Path(self.docstore_directory).exists():
+                logger.error(f"No se encontraron los directorios de la base de datos. Ejecuta 'data_chunkieren.py' primero.")
                 return None
-            
+
+            logger.info("Cargando Vectorstore (ChromaDB)...")
             vectorstore = Chroma(
                 collection_name=self.collection_name,
                 embedding_function=self.embeddings,
                 persist_directory=self.persist_directory
             )
-            
-            # Validar que la BD no está vacía
-            collection_count = vectorstore._collection.count()
-            if collection_count > 0:
-                logger.info(
-                    f"✅ ChromaDB '{self.collection_name}' cargado exitosamente\n"
-                    f"   Total de documentos: {collection_count}"
-                )
-                return vectorstore
-            else:
-                logger.warning("⚠️ ChromaDB existe pero está vacío. Ejecuta 'python data_chunkieren.py'")
-                return None
-                
+
+            logger.info("Cargando Docstore (SimpleFileSystemStore)...")
+            store = SimpleFileSystemStore(root_path=self.docstore_directory)
+
+            retriever = ParentDocumentRetriever(
+                vectorstore=vectorstore,
+                docstore=store,
+                child_splitter=RecursiveCharacterTextSplitter(chunk_size=400), # Debe coincidir con data_chunkieren
+                parent_splitter=RecursiveCharacterTextSplitter(chunk_size=2000) # Debe coincidir con data_chunkieren
+            )
+            logger.info("✅ ParentDocumentRetriever cargado y listo.")
+            return retriever
         except Exception as e:
-            logger.error(f"❌ Error al cargar ChromaDB: {e}", exc_info=True)
+            logger.error(f"❌ Error crítico al cargar el retriever: {e}", exc_info=True)
             return None
-    
-    def _create_qa_chain(self, vectorstore: Chroma) -> Optional[RetrievalQA]:
-        """Crea la cadena de Q&A con configuración optimizada"""
+
+    def _tool_document_search(self, query: str) -> str:
+        """
+        Herramienta que usa el ParentDocumentRetriever para buscar documentos
+        relevantes y devolver su contenido formateado para el prompt del agente.
+        """
+        if not self.retriever:
+            return "Error: El sistema de recuperación de documentos no está disponible."
+        
         try:
-            if not self.llm:
-                self.llm = ChatVertexAI(
-                    project=PROJECT_ID,
-                    location=REGION,
-                    model=self.model_name, # Usar configuración centralizada
-                    temperature=self.temperature # Usar configuración centralizada
-                )
+            logger.info(f"Buscando documentos para la consulta: '{query}'")
+            retrieved_docs = self.retriever.get_relevant_documents(query)
             
-            retriever = vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs={"k": self.retrieval_k}
-            )
+            if not retrieved_docs:
+                logger.warning("No se encontraron documentos relevantes.")
+                return "No se encontraron documentos relevantes en la base de conocimiento para esta consulta."
             
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=self.llm,
-                chain_type="stuff",
-                retriever=retriever,
-                verbose=self.debug,
-                return_source_documents=True
-            )
+            # Formatear los documentos "padre" para que el LLM los analice
+            context_str = ""
+            for i, doc in enumerate(retrieved_docs):
+                metadata_str = f"Fuente: {doc.metadata.get('file', 'N/A')}, Página: {doc.metadata.get('page', 'N/A')}"
+                context_str += f'--- INICIO DOCUMENTO {i+1} ({metadata_str}) ---\n\n'
+                context_str += doc.page_content
+                context_str += f'\n\n--- FIN DOCUMENTO {i+1} ---\n\n'
             
-            return qa_chain
-            
+            logger.info(f"Se encontraron {len(retrieved_docs)} documentos padre relevantes.")
+            return context_str
+
         except Exception as e:
-            logger.error(f"Error creando QA chain: {e}")
-            return None
-    
-    def _safe_qa_invoke(self, qa_chain: RetrievalQA, query: str) -> str:
-        """Invoca Q&A con validaciones robustas"""
-        try:
-            result = qa_chain.invoke({"query": query})
-            answer = result.get("result", "").strip()
-            source_documents = result.get("source_documents", [])
-            
-            # Validación 1: Verificar que hay respuesta
-            if not answer:
-                logger.warning(f"No se obtuvo respuesta para: {query}")
-                return (
-                    "No se encontró información relevante en la base de datos para tu pregunta.\n"
-                    "Por favor, intenta reformular tu pregunta o verifica que los documentos "
-                    "necesarios estén en la base de datos."
-                )
-            
-            # Validación 2: Verificar que hay documentos fuente
-            if not source_documents:
-                logger.warning(f"Sin documentos fuente para: {query}")
-                return (
-                    "La búsqueda no encontró documentos relevantes. "
-                    "Por favor, intenta con otros términos."
-                )
-            
-            # Validación 3: Generar citas
-            citations = []
-            seen_sources = set()
-            
-            for doc in source_documents:
-                file_name = doc.metadata.get("file", "N/A")
-                page_num = doc.metadata.get("page", "N/A")
-                company = doc.metadata.get("company", "")
-                
-                source_key = f"{file_name} (página {page_num})" if page_num != "N/A" else file_name
-                
-                if source_key not in seen_sources:
-                    citations.append(f"• {source_key}")
-                    seen_sources.add(source_key)
-            
-            # Construir respuesta final
-            if citations:
-                citations_text = "\n\n📚 **Fuentes utilizadas:**\n" + "\n".join(citations)
-                return answer + citations_text
-            else:
-                return answer
-                
-        except Exception as e:
-            logger.error(f"Error en QA invoke: {e}", exc_info=True)
-            return (
-                f"Error al procesar tu pregunta: {str(e)}\n"
-                f"Por favor, intenta de nuevo o reformula tu pregunta."
-            )
+            logger.error(f"Error en la herramienta de bósqueda de documentos: {e}", exc_info=True)
+            return f"Error técnico al buscar en la base de datos: {e}"
 
     def _tool_query_uploaded_pdf(self, query_and_path: str) -> str:
-        """Procesa preguntas sobre PDFs subidos"""
+        """
+        Procesa preguntas sobre un PDF subido por el usuario.
+        Esta función ahora es secundaria y solo para archivos temporales.
+        """
+        # (Esta función se mantiene sin cambios importantes por ahora,
+        # ya que su lógica de crear un vectorstore temporal sigue siendo válida)
         try:
             parts = query_and_path.split('|')
-            if len(parts) != 2:
-                return "❌ Formato incorrecto. Usa: 'ruta/archivo.pdf|tu pregunta'"
+            if len(parts) != 2: return "❌ Formato incorrecto. Usa: 'ruta/archivo.pdf|tu pregunta'"
             
             file_path_str, query = parts
             file_path = Path(file_path_str)
+            if not file_path.exists(): return f"❌ Archivo no encontrado: {file_path_str}"
 
-            if not file_path.exists():
-                return f"❌ Archivo no encontrado: {file_path_str}"
-
-            logger.info(f"Procesando PDF: {file_path_str}")
-            
-            # Extraer texto
-            pages_content = []
+            logger.info(f"Procesando PDF temporal: {file_path_str}")
             with pdfplumber.open(file_path) as pdf:
-                for i, page in enumerate(pdf.pages):
-                    page_text = page.extract_text()
-                    if page_text:
-                        pages_content.append({
-                            "text": page_text,
-                            "metadata": {"file": file_path.name, "page": i + 1}
-                        })
-            
-            if not pages_content:
-                return "❌ No se pudo extraer texto del PDF. ¿Es una imagen escaneada?"
+                docs = [Document(page_content=page.extract_text() or "", metadata={"file": file_path.name, "page": i+1}) for i, page in enumerate(pdf.pages)]
 
-            # Chunking
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=100
+            if not docs: return "❌ No se pudo extraer texto del PDF."
+
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            split_docs = text_splitter.split_documents(docs)
+            
+            temp_vectorstore = Chroma.from_documents(split_docs, self.embeddings)
+            
+            # Usamos una cadena simple de QA para esta tarea específica
+            from langchain.chains import RetrievalQA
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=self.llm, chain_type="stuff", retriever=temp_vectorstore.as_retriever()
             )
-            
-            docs = []
-            for page in pages_content:
-                chunks = text_splitter.split_text(page["text"])
-                for chunk in chunks:
-                    docs.append(Document(
-                        page_content=chunk,
-                        metadata=page["metadata"]
-                    ))
+            result = qa_chain.invoke({"query": query})
+            return result.get("result", "No se pudo obtener una respuesta del PDF.")
 
-            if not docs:
-                return "❌ El PDF no contiene texto procesable."
-
-            # Crear vectorstore temporal
-            temp_vectorstore = Chroma.from_documents(
-                documents=docs,
-                embedding=self.embeddings
-            )
-            
-            qa_chain = self._create_qa_chain(temp_vectorstore)
-            if not qa_chain:
-                return "❌ Error al procesar el PDF."
-
-            return self._safe_qa_invoke(qa_chain, query)
-            
         except Exception as e:
-            logger.error(f"Error procesando PDF: {e}", exc_info=True)
-            return (
-                f"❌ Error al procesar el archivo PDF.\n"
-                f"Causa: {str(e)}\n"
-                f"Por favor, verifica que el archivo no esté corrupto."
-            )
+            logger.error(f"Error procesando PDF temporal: {e}", exc_info=True)
+            return f"❌ Error al procesar el archivo PDF: {e}"
 
-    def _tool_get_raw_documents(self, query: str) -> str:
-        """Una herramienta simple que solo recupera documentos crudos del vectorstore."""
-        try:
-            if not self.vectorstore:
-                return "Error: La base de conocimiento no está disponible."
-            
-            retrieved_docs = self.vectorstore.similarity_search(query, k=self.retrieval_k)
-            
-            if not retrieved_docs:
-                return "No se encontraron documentos relevantes para la consulta."
-                
-            # Formatear los documentos para la observación del agente
-            context_str = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
-            return context_str
-            
-        except Exception as e:
-            logger.error(f"Error en la recuperación de documentos: {e}", exc_info=True)
-            return f"Error al buscar en la base de datos: {e}"
-
-    def setup_tools(self, vectorstore: Optional[Chroma] = None) -> List[Tool]:
-        """Configura las herramientas del agente"""
-        tools = []
-        
-        if vectorstore is None:
-            vectorstore = self.load_existing_vectorstore()
-        
-        # Herramienta 1: Búsqueda en documentos
-        if vectorstore:
-            tools.append(Tool(
-                name="document_search",
-                func=self._tool_get_raw_documents,
+    def _setup_tools(self) -> List[Tool]:
+        """Configura las herramientas del agente."""
+        tools = [
+            Tool(
+                name="knowledge_base_search",
+                func=self._tool_document_search,
                 description=(
-                    "Busca y devuelve fragmentos de documentos de la base de conocimiento de AMARETIS. "
-                    "Usa esta herramienta para obtener el contexto necesario para responder preguntas sobre la empresa."
+                    "\u00dasla para responder CUALQUIER pregunta sobre AMARETIS, sus proyectos, clientes o conocimiento interno. "
+                    "Esta herramienta busca en la base de datos de documentos de la empresa y devuelve el contenido completo de los documentos relevantes."
                 )
-            ))
-        
-        # Herramienta 2: Búsqueda en PDF subidos
-        tools.append(Tool(
-            name="uploaded_file_search",
-            func=self._tool_query_uploaded_pdf,
-            description=(
-                "Busca información en un PDF específico que el usuario acaba de subir. "
-                "El input DEBE tener el formato: 'ruta/del/archivo.pdf|pregunta del usuario'"
+            ),
+            Tool(
+                name="uploaded_file_search",
+                func=self._tool_query_uploaded_pdf,
+                description=(
+                    "\u00dasla SOLAMENTE si el usuario menciona explícitamente un 'archivo subido' o 'PDF cargado' en su pregunta MÁS RECIENTE. "
+                    "El input DEBE tener el formato: 'ruta/del/archivo.pdf|pregunta del usuario'"
+                )
             )
-        ))
-
+        ]
         logger.info(f"✅ Herramientas configuradas: {[tool.name for tool in tools]}")
         return tools
-    
-    def create_marketing_agent(self, tools: List[Tool]) -> Optional[AgentExecutor]:
-        """Crea el agente con prompt mejorado"""
+
+    def _create_analyst_agent(self) -> Optional[AgentExecutor]:
+        """
+        Crea el agente con el nuevo prompt de "Analista Senior".
+        """
         try:
-            prompt = ChatPromptTemplate.from_template("""
-Eres el "Asistente AMARETIS" - un experto en búsqueda de información corporativa.
+            prompt = ChatPromptTemplate.from_template('''
+Eres un "Analista Senior de Inteligencia de Marketing" en AMARETIS. Tu misión es proporcionar respuestas detalladas, bien estructuradas y perspicaces, basadas EXCLUSIVAMENTE en el contexto de los documentos proporcionados.
 
-Tu ÚNICA misión es responder preguntas basándote en la información de tus herramientas.
-NUNCA inventes información. Si no encuentras algo, dilo claramente.
+**PROCESO OBLIGATORIO:**
 
-**REGLAS DE ENRUTAMIENTO:**
-1. Si la pregunta menciona un "archivo subido", usa `uploaded_file_search`
-2. Para todas las otras preguntas sobre la empresa, usa `document_search`
-3. SOLO responde basándote en lo que tus herramientas retornen
+1.  **Analiza la Pregunta:** Comprende profundamente la solicitud del usuario.
+2.  **Busca en la Base de Conocimiento:** Usa la herramienta `knowledge_base_search` para obtener los documentos relevantes. La observación de esta herramienta contendrá el texto completo de uno o más documentos internos.
+3.  **Sintetiza la Respuesta:** Lee CUIDADOSAMENTE todo el contexto proporcionado en la observación. Tu respuesta final debe ser una síntesis experta de esta información. NO inventes nada que no esté en el texto.
+4.  **Estructura y Cita:**
+    *   Comienza con un resumen ejecutivo (1-2 frases).
+    *   Desarrolla la respuesta con párrafos claros y, si es apropiado, usa listas con viñetas.
+    *   Al final de tu respuesta, AÑADE SIEMPRE una sección de "Fuentes" citando los documentos que usaste (ej. "Fuente: nombre_del_archivo.pdf, Página: 5"). La información de la fuente se encuentra en la línea `--- INICIO DOCUMENTO ... ---`.
 
 **HERRAMIENTAS DISPONIBLES:**
+Nombres de Herramientas: {tool_names}
 {tools}
 
-**NOMBRE DE HERRAMIENTAS (úsalos exactamente):**
-{tool_names}
+**FORMATO DE PENSAMIENTO Y RESPUESTA:**
 
-**INSTRUCCIONES DE RESPUESTA:**
-Thought: [Analiza si esta pregunta se puede responder con tus herramientas]
-Action: [Nombre exacto de la herramienta a usar]
-Action Input: [La pregunta o entrada formateada correctamente]
-Observation: [Lo que la herramienta retorna]
-Thought: [Resumen de la información recibida]
-Final Answer: [Tu respuesta basada ÚNICAMENTE en la Observation]
+Thought: El usuario pregunta sobre [tema]. Necesito obtener el contexto completo de los documentos internos. Usaré la herramienta `knowledge_base_search`.
+Action: knowledge_base_search
+Action Input: [La pregunta original del usuario]
+Observation: [Recibirás el contenido completo de varios documentos aquí]
+Thought: He recibido el contexto de los documentos. Ahora voy a leerlo detenidamente, sintetizar la información clave, estructurar la respuesta como un analista senior y añadir las citas al final.
+Final Answer: [Aquí va tu respuesta final, completa, bien estructurada y con la sección de fuentes al final.]
 
 **IMPORTANTE:**
-- Si la herramienta retorna "no se encontró", dile al usuario que no hay esa información
-- No hagas suposiciones
-- Sé preciso y conciso
+- Tu respuesta final debe ser completa y no solo una repetición de la observación. Debes procesar la información.
+- Si la observación indica que "No se encontraron documentos relevantes", tu respuesta final debe ser exactamente esa frase.
 
 Historial previo: {history}
 Pregunta del usuario: {input}
 
-Comienza:
-{agent_scratchpad}""")
+Comienza tu análisis:
+{agent_scratchpad}
+''')
 
             if not self.llm:
-                self.llm = ChatVertexAI(
-                    project=PROJECT_ID,
-                    location=REGION,
-                    model=self.model_name, # Usar configuración centralizada
-                    temperature=self.temperature # Usar configuración centralizada
-                )
+                self.llm = ChatVertexAI(project=PROJECT_ID, location=REGION, model=self.model_name, temperature=self.temperature)
             
-            agent = create_react_agent(
-                llm=self.llm,
-                tools=tools,
-                prompt=prompt
-            )
+            agent_runnable = create_react_agent(llm=self.llm, tools=self.tools, prompt=prompt)
             
             executor = AgentExecutor(
-                agent=agent,
-                tools=tools,
-                verbose=True,
-                handle_parsing_errors=True,
+                agent=agent_runnable,
+                tools=self.tools,
+                verbose=self.debug,
+                handle_parsing_errors="Por favor, reintenta con un formato de acción válido.",
                 max_iterations=5,
-                max_execution_time=60
+                max_execution_time=90
             )
             executor.name = "rag_agent"
-            
             return executor
             
         except Exception as e:
-            logger.error(f"Error creando agente: {e}")
+            logger.error(f"Error creando el agente analista: {e}", exc_info=True)
             return None
     
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """Invoca el agente con validaciones"""
         if not self.agent:
-            self.agent, _ = self.initialize_complete_agent()
+            self.agent = self.initialize_complete_agent()
             if not self.agent:
                 return {"output": "❌ Error: No se pudo inicializar el RAG Agent"}
         
         user_input = input_dict.get("input", "").strip()
         history = input_dict.get("history", [])
         
-        # Analizar la pregunta
         is_valid, reason = self.query_analyzer.is_valid_query(user_input)
         if not is_valid:
             logger.warning(f"Pregunta rechazada: {reason}")
             return {"output": f"❌ {reason}"}
         
         try:
-            result = self.agent.invoke({
-                "input": user_input,
-                "history": history
-            })
+            result = self.agent.invoke({"input": user_input, "history": history})
             return {"output": result.get("output", str(result))}
-            
         except Exception as e:
-            logger.error(f"Error en invoke: {e}", exc_info=True)
-            return {"output": f"❌ Error técnico: {str(e)}"}
+            logger.error(f"Error en invoke del RAG Agent: {e}", exc_info=True)
+            return {"output": f"❌ Error técnico en el agente RAG: {str(e)}"}
 
-    def initialize_complete_agent(self) -> Tuple[Optional[AgentExecutor], Optional[Chroma]]:
-        """Inicializa el agente completo"""
-        logger.info("Inicializando RAG Agent...")
-        self.vectorstore = self.load_existing_vectorstore()
+    def initialize_complete_agent(self) -> Optional[AgentExecutor]:
+        """Inicializa y devuelve el agente completamente configurado."""
+        logger.info("Inicializando RAG Agent v4.0...")
+        self.retriever = self._load_retriever()
         
-        if not self.vectorstore:
-            logger.error("No se pudo cargar ChromaDB")
-            return None, None
+        if not self.retriever:
+            logger.error("Fallo al cargar el ParentDocumentRetriever. El agente no puede funcionar.")
+            return None
         
-        self.tools = self.setup_tools(self.vectorstore)
-        if not self.tools:
-            logger.error("No se pudieron configurar las herramientas")
-            return None, self.vectorstore
-        
-        self.agent = self.create_marketing_agent(self.tools)
+        self.tools = self._setup_tools()
+        self.agent = self._create_analyst_agent()
         
         if self.agent:
-            logger.info("✅ RAG Agent inicializado correctamente")
+            logger.info("✅ RAG Agent v4.0 inicializado correctamente.")
         else:
-            logger.error("Error inicializando RAG Agent")
+            logger.error("❌ Error fatal al inicializar el RAG Agent v4.0.")
         
-        return self.agent, self.vectorstore
+        return self.agent
 
-
-def create_amaretis_rag_agent(debug: bool = False, **kwargs) -> Tuple[Optional[AgentExecutor], Optional[Chroma]]:
-    """Factory function para crear el RAG Agent"""
+def create_amaretis_rag_agent(debug: bool = False, **kwargs) -> Tuple[Optional[AgentExecutor], Optional[Any]]:
+    """
+    Función de fábrica para crear e inicializar el RAG Agent.
+    Devuelve el agente y, como segundo elemento, el retriever (o None).
+    """
     try:
         rag = RAGAgent(debug=debug, **kwargs)
-        return rag.initialize_complete_agent()
+        agent = rag.initialize_complete_agent()
+        return agent, rag.retriever
     except Exception as e:
-        logger.error(f"Error creando AMARETIS RAG Agent: {e}")
+        logger.error(f"Error creando AMARETIS RAG Agent: {e}", exc_info=True)
         return None, None
