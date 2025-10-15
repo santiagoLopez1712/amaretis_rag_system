@@ -167,7 +167,3 @@ Puedes usarlo, modificarlo y adaptarlo libremente con atribución al autor origi
 yaml
 Code kopieren
 
----
-
-¿Quieres que te genere también la **versión en formato `README_ES.md` (solo español)** para incluir como segunda opción en el repo (por ejemplo, `README_EN.md` y `README_ES.md`)?  
-Así tendrías una versión técnica bilingüe y otra local para presentaciones en Alemania.
