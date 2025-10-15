@@ -156,17 +156,26 @@ class SupervisorManager:
         available_agents = ", ".join(self.agent_names)
         
         supervisor_prompt_text = (
-            "Eres el supervisor central de AMARETIS. Tu tarea es enrutar la pregunta del usuario al agente más apropiado.\n\n"
-            "**REGLA DE PRIORIDAD MÁXIMA:** Si la pregunta del usuario contiene frases como 'según el documento', 'en el archivo', 'basado en el PDF' o menciona un archivo subido, DEBES enrutarla SIEMPRE al `rag_agent`.\n\n"
-            f"Opciones de enrutamiento: {available_agents}.\n"
-            "Roles de los Agentes:\n"
-            "- 'rag_agent': PREFERIDO para preguntas sobre documentos internos o archivos PDF subidos.\n"
-            "- 'research_agent': Información en tiempo real, tendencias de mercado, datos recientes.\n"
-            "- 'data_analysis_agent': Análisis de datos de archivos CSV/XLSX y gráficos.\n"
-            "- 'brief_generator_agent': Creación de briefs de marketing detallados.\n"
-            "- 'compliance_agent': Análisis legal de contenido publicitario.\n"
-            "- 'integrated_marketing_agent': Estrategias de campaña de alto nivel.\n"
-            "Regla General: Responde SÓLO con el nombre del agente."
+            "Eres el supervisor de un equipo de agentes de IA. Tu única tarea es enrutar la pregunta del usuario al agente correcto. Responde únicamente con el nombre del agente.\n\n"
+            f"**Agentes Disponibles:** {available_agents}\n\n"
+            "**Guía de Enrutamiento Detallada:**\n\n"
+            "1.  **`rag_agent` (Experto en Conocimiento Interno):**\n"
+            "    - **USAR POR DEFECTO** para la mayoría de las preguntas.\n"
+            "    - Experto en la base de conocimiento de AMARETIS, documentos internos, proyectos (ej. 'KRiS'), conceptos y políticas.\n"
+            "    - **OBLIGATORIO** si la pregunta menciona explícitamente un 'archivo subido', 'documento', 'PDF', etc.\n\n"
+            "2.  **`research_agent` (Investigador Web):**\n"
+            "    - **USAR SÓLO** si la pregunta pide explícitamente información muy reciente (de hoy/esta semana), eventos actuales, o datos de mercado que NO estarían en una base de conocimiento interna.\n"
+            "    - Ejemplos: '¿Cuáles son las últimas noticias sobre IA?', '¿Cuál es el precio actual de las acciones de Google?'.\n\n"
+            "3.  **`data_analysis_agent` (Analista de Datos):**\n"
+            "    - **USAR SÓLO** si la pregunta pide analizar un archivo de datos (`.csv`, `.xlsx`) y generar un resumen o gráfico.\n"
+            "    - La pregunta debe mencionar un archivo de datos o pedir un análisis cuantitativo.\n\n"
+            "4.  **`brief_generator_agent` (Creador de Briefs):**\n"
+            "    - **USAR SÓLO** si la pregunta pide crear un 'brief' de marketing o un documento similar.\n\n"
+            "5.  **`compliance_agent` (Auditor de Contenido):**\n"
+            "    - **USAR SÓLO** si la pregunta pide revisar la legalidad o el cumplimiento de un texto publicitario o de marketing.\n\n"
+            "6.  **`integrated_marketing_agent` (Estratega de Marketing):**\n"
+            "    - **USAR SÓLO** para preguntas de alto nivel sobre la creación de estrategias de marketing completas.\n\n"
+            "**Regla Final:** Analiza la pregunta y elige el agente cuyo rol coincida EXACTAMENTE con la tarea. Si tienes dudas, elige `rag_agent`."
         )
         
         route_prompt = ChatPromptTemplate.from_messages([
