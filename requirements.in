@@ -27,6 +27,7 @@ langchain-google-genai
 langchain-google-vertexai
 langchain-chroma
 langchain-huggingface
+langchain-tavily  
 
 # ===== EMBEDDINGS & VECTOR DB =====
 sentence-transformers

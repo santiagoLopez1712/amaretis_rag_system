@@ -12,7 +12,9 @@ aiofiles==23.2.1
 aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.13.0
-    # via langchain-community
+    # via
+    #   langchain-community
+    #   langchain-tavily
 aiosignal==1.4.0
     # via aiohttp
 altair==5.5.0
@@ -247,6 +249,7 @@ langchain==0.3.27
     # via
     #   -r requirements.in
     #   langchain-community
+    #   langchain-tavily
 langchain-chroma==0.2.3
     # via -r requirements.in
 langchain-community==0.3.31
@@ -262,6 +265,7 @@ langchain-core==0.3.79
     #   langchain-google-genai
     #   langchain-google-vertexai
     #   langchain-huggingface
+    #   langchain-tavily
     #   langchain-text-splitters
     #   langgraph
     #   langgraph-checkpoint
@@ -273,6 +277,8 @@ langchain-google-genai==2.1.12
 langchain-google-vertexai==2.0.22
     # via -r requirements.in
 langchain-huggingface==0.3.1
+    # via -r requirements.in
+langchain-tavily==0.2.12
     # via -r requirements.in
 langchain-text-splitters==0.3.11
     # via langchain
@@ -540,6 +546,7 @@ requests==2.32.5
     #   kubernetes
     #   langchain
     #   langchain-community
+    #   langchain-tavily
     #   langsmith
     #   posthog
     #   requests-oauthlib
