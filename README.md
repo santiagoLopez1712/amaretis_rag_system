@@ -1,7 +1,7 @@
 # 🎯 AMARETIS Marketing Intelligence System
 
 ## 🌍 Overview
-**AMARETIS** is a multi-agent AI system designed in Göttingen (Germany) to support marketing teams and decision-makers in tasks such as campaign planning, compliance validation, data analysis, and RAG-based knowledge management.
+**AMARETIS Marketing Intelligence System** is a multi-agent AI system designed in Göttingen (Germany) to support marketing teams and decision-makers in tasks such as campaign planning, compliance validation, data analysis, and RAG-based knowledge management.
 
 The system combines advanced LLM orchestration (via **LangGraph** and **LangChain**) with specialized AI agents — each trained for a distinct domain — all coordinated by a central **SupervisorManager**.  
 It integrates **retrieval-augmented generation (RAG)**, **compliance auditing**, and **automated brief generation** into a unified intelligent assistant.
@@ -19,7 +19,7 @@ It integrates **retrieval-augmented generation (RAG)**, **compliance auditing**,
 | 📊 **Data Analysis Agent** | Data Scientist | Analyzes CSV/XLSX/PDF data, generating safe Python visualizations in sandboxed environments. |
 | ⚖️ **Compliance Agent** | Legal & Governance Expert | Checks GDPR, UWG, and data retention compliance using hybrid rules + LLM reasoning. |
 | 📝 **Brief Generator Agent** | Marketing Planner | Produces structured, strategic briefs with segmentation, SMART goals, and creative guidance. |
-| 🌐 **Web Search Agent** | Research Analyst | Performs multi-step online research with source citations using TavilySearch and web scraping. |
+| 🌐 **research_agent** | Research Analyst | Performs multi-step online research with source citations using TavilySearch and web scraping. |
 | 💼 **Integrated Marketing Agent** | Strategic Synthesizer | Provides high-level marketing strategy and synthesis across all agents’ outputs. |
 
 ---
@@ -48,21 +48,21 @@ It integrates **retrieval-augmented generation (RAG)**, **compliance auditing**,
 | Category | Problem | Resolution |
 |-----------|----------|-------------|
 | **Security** | Remote code execution (use of `exec`) | Replaced with **sandboxed PythonREPL** execution. |
-| **Concurrency** | Overwriting charts (`plot.png`) | Added **UUID-based unique filenames**. |
-| **Consistency** | Model names hardcoded | Centralized LLM configuration (`gemini-1.5-pro`) in Supervisor. |
+| **Concurrency** | Overwriting charts (`plot.png`) | Added **directory clearing** before each visualization. |
+| **Consistency** | Model names hardcoded | Centralized LLM configuration (`gemini-2.5-pro`) in Supervisor. |
 | **Compliance Rules** | Hardcoded regex/recommendations | Moved to external YAML configuration. |
 | **Conversation Context** | Ignored by some agents | Integrated history context into ReAct and LCEL chains. |
 
 ---
 
-## 🧰 Tech Stack
+## 🧰 Tech Stack    
 
 | Layer | Technology |
 |-------|-------------|
 | **Frontend** | Gradio |
 | **Core Framework** | LangChain, LangGraph |
 | **Vector Databases** | ChromaDB, FAISS (in-memory) |
-| **LLMs** | Google Gemini 1.5 Pro / Flash |
+| **LLMs** | Google Gemini 2.5 Pro |
 | **Backend** | Python 3.10+ |
 | **Visualization** | Matplotlib, Pandas |
 | **Search APIs** | TavilySearch, WebScraper Tools |
@@ -126,15 +126,11 @@ class NewAgent:
         self.tools = [Tool(name="my_tool", func=self.my_func, description="...")]
 ```
 
-Then register it in `supervisor_main.py` for routing.
+Then register it in `supervisor.py` for routing.
 
 ---
 
 ## 🧪 Testing
-To verify each module individually:
-```bash
-python run_demo.py
-```
 
 ---
 
@@ -142,19 +138,18 @@ python run_demo.py
 ```
 amaretis_rag_system/
 │
-├── app.py                  # Gradio web interface
-├── supervisor_main.py      # LangGraph orchestration
-├── rag_agent.py            # RAG retrieval agent
-├── compliance_agent.py     # Compliance & GDPR checker
-├── data_analysis_agent.py  # Data visualization and analysis
-├── brief_generator_agent.py# Brief generation agent
-├── integrated_marketing_agent.py # Strategic synthesis
-├── web_such_agent.py       # Web research agent
-├── tools.py                # Shared utilities
-├── data_loader.py          # Dataset preparation
-├── data_chunkieren.py      # Text chunking logic
-├── requirements.txt
-└── .gitignore
+├── app.py                          # Gradio web interface
+├── supervisor.py                   # LangGraph orchestration
+├── rag_agent.py                    # RAG retrieval agent
+├── compliance_agent.py             # Compliance & GDPR checker
+├── data_analysis_agent.py          # Data visualization and analysis
+├── brief_generator_agent.py        # Brief generation agent
+├── integrated_marketing_agent.py   # Strategic synthesis
+├── web_such_agent.py               # Web research agent
+├── data_loader.py                  # Dataset preparation
+├── data_chunkieren.py              # Text chunking logic
+├── requirements.txt                # Dependencies 
+└── .gitignore                      # Git ignore   
 ```
 
 ---
@@ -170,8 +165,13 @@ amaretis_rag_system/
 
 ## 🧑‍💻 Author
 **Santiago López Otálvaro**  
-Developer & AI Specialist — Göttingen, Germany  
+Developer & AI Specialist — AMARETIS Agentur für Kommunikation 
+Göttingen, Germany  
+
 [GitHub Profile](https://github.com/santiagoLopez1712)
+[LinkedIn Profile](https://www.linkedin.com/in/santiago-lopez-otalvaro-a129ba336/)
+[Xing Profile](https://www.xing.com/profile/Santiago_LopezOtalvaro/web_profiles/cv)
+ 
 
 ---
 
