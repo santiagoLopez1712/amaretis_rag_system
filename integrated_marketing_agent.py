@@ -29,7 +29,9 @@ def create_marketing_pipeline(vectorstore: Optional[Any], model_name: str, tempe
         temperature=temperature
     )
 
-    retriever = vectorstore.as_retriever(k=5) if vectorstore else RunnableLambda(lambda query: [])
+    # CORRECCIÓN: El objeto 'vectorstore' que recibimos es en realidad el RETRIEVER del RAG Agent.
+    # Simplemente lo usamos directamente en lugar de llamar a .as_retriever().
+    retriever = vectorstore if vectorstore else RunnableLambda(lambda query: [])
 
     # El prompt ahora incluye el historial de conversación
     prompt_template = ChatPromptTemplate.from_template(
