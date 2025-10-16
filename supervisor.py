@@ -144,15 +144,37 @@ class SupervisorManager:
         response = self._handle_simple_query(user_input)
         return {"messages": [{"role": "assistant", "content": response, "name": "supervisor"}]}
 
-    def route_question(self, state: AgentState) -> str:
-        """Decide si la pregunta es simple (direct_response) o compleja (enrutar con LLM)."""
-        user_input = state["messages"][-1]["content"]
+    def _simple_route(self, query: str) -> Optional[str]:
+        """Routing sin LLM - solo keywords"""
+        query_lower = query.lower()
         
-        if self._handle_simple_query(user_input) is not None:
-            logger.info("Pregunta simple detectada. Enrutando a 'direct_response'.")
-            return "direct_response"
+        # Mapeo simple
+        routes = {
+            "csv": "data_analysis_agent",
+            "xlsx": "data_analysis_agent",
+            "analizar": "data_analysis_agent",
+            "análisis": "data_analysis_agent",
+            "graficar": "data_analysis_agent",
+            "gdpr": "compliance_agent",
+            "legal": "compliance_agent",
+            "cumplimiento": "compliance_agent",
+            "brief": "brief_generator_agent",
+            "estrategia": "integrated_marketing_agent",
+            "campaña": "integrated_marketing_agent",
+            "web": "research_agent",
+            "noticias": "research_agent",
+            "buscar en internet": "research_agent"
+        }
         
-        logger.info("Pregunta compleja detectada. Usando el LLM-Router...")
+        for keyword, agent in routes.items():
+            if keyword in query_lower:
+                logger.info(f"Simple route matched: '{keyword}' → {agent}")
+                return agent
+        
+        return None  # Usar LLM si no hay match
+
+    def _llm_route(self, user_input: str) -> str:
+        """Routing con LLM - solo cuando sea necesario"""
         available_agents = ", ".join(self.agent_names)
         
         supervisor_prompt_text = (
@@ -193,6 +215,24 @@ class SupervisorManager:
         except Exception as e:
             logger.error(f"Error crítico en el routing LLM: {e}. Fallback a rag_agent.")
             return 'rag_agent'
+
+    def route_question(self, state: AgentState) -> str:
+        """Decide si la pregunta es simple (direct_response), se puede enrutar con keywords, o requiere LLM."""
+        user_input = state["messages"][-1]["content"]
+        
+        # 1. Check for simple, direct responses (greetings, help)
+        if self._handle_simple_query(user_input) is not None:
+            logger.info("Pregunta simple detectada. Enrutando a 'direct_response'.")
+            return "direct_response"
+        
+        # 2. Try simple, keyword-based routing
+        simple_route = self._simple_route(user_input)
+        if simple_route:
+            return simple_route
+        
+        # 3. Fallback to LLM router for complex cases
+        logger.info("Pregunta compleja detectada. Usando el LLM-Router...")
+        return self._llm_route(user_input)
 
     def setup_supervisor(self):
         """Configura el supervisor (LangGraph StateGraph) con la estructura optimizada."""

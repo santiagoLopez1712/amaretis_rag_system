@@ -33,10 +33,11 @@ class AmaretisWebApp:
     def __init__(self, supervisor: Optional[SupervisorManager]):
         self.supervisor = supervisor
 
-    def process_message(self, message: str, history: List[Tuple[Optional[str], Optional[str]]], uploaded_file: Optional[Any]) -> Tuple[List[Tuple[Optional[str], Optional[str]]], str, Optional[str], Optional[Any]]:
+    def process_message(self, message: str, history: List[Dict[str, str]], uploaded_file: Optional[Any]) -> Tuple[List[Dict[str, str]], str, Optional[str], Optional[Any]]:
         if not self.supervisor:
             error_msg = "El sistema de IA no está disponible debido a un error de inicialización."
-            history.append((message, error_msg))
+            history.append({"role": "user", "content": message})
+            history.append({"role": "assistant", "content": error_msg})
             return history, "", None, None
 
         user_input = message.strip()
@@ -67,26 +68,22 @@ class AmaretisWebApp:
             return history, "", None, None
 
         try:
-            # [ADAPTADOR] Convertir el historial de tuplas (formato Gradio) a diccionarios (formato Agente)
-            agent_history = []
-            for user_msg, assistant_msg in history:
-                if user_msg is not None:
-                    agent_history.append({"role": "user", "content": user_msg})
-                if assistant_msg is not None:
-                    agent_history.append({"role": "assistant", "content": assistant_msg})
+            # Con type='messages', el historial ya está en el formato correcto (List[Dict[str, str]])
+            agent_history = history
             
-            # Ahora pasamos el historial convertido al supervisor
+            # Ahora pasamos el historial directamente al supervisor
             answer_text, source, image_path = self.supervisor.process_question(augmented_input, agent_history)
             formatted_answer = f"{answer_text}\n\n📚 *Fuente: {source}*"
             
-            # Gradio maneja el historial implícitamente
-            history.append((user_input, formatted_answer))
+            history.append({"role": "user", "content": user_input})
+            history.append({"role": "assistant", "content": formatted_answer})
             return history, "", image_path, None
             
         except Exception as e:
             logger.error(f"Error procesando el mensaje: {e}", exc_info=True)
             error_msg = "Lo siento, ocurrió un error inesperado al procesar tu pregunta."
-            history.append((user_input, error_msg))
+            history.append({"role": "user", "content": user_input})
+            history.append({"role": "assistant", "content": error_msg})
             return history, "", None, None
 
 def create_interface(supervisor_instance: Optional[SupervisorManager]) -> gr.Blocks:
@@ -104,8 +101,8 @@ def create_interface(supervisor_instance: Optional[SupervisorManager]) -> gr.Blo
         
         with gr.Row():
             with gr.Column(scale=2):
-                # --- CORRECCIÓN: Se elimina el argumento 'type' obsoleto ---
-                chatbot = gr.Chatbot(label="💬 Marketing Assistant", height=600)
+                # --- CORRECCIÓN: Se usa type='messages' para el formato de chat moderno ---
+                chatbot = gr.Chatbot(label="💬 Marketing Assistant", height=600, type="messages")
                 msg_input = gr.Textbox(label="Tu Pregunta", placeholder="Sube un archivo y haz una pregunta sobre él...")
                 with gr.Row():
                     send_btn = gr.Button("📤 Enviar", variant="primary")
