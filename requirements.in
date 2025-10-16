@@ -39,5 +39,5 @@ transformers!=4.57.0  # Evitar la versión "yanked"
 tavily-python
 
 # ===== UI =====
-gradio
+gradio>=4.44.1 # Versión mínima para compatibilidad con Python 3.11
 faiss-cpu
