@@ -63,7 +63,7 @@ It integrates **retrieval-augmented generation (RAG)**, **compliance auditing**,
 | **Core Framework** | LangChain, LangGraph |
 | **Vector Databases** | ChromaDB, FAISS (in-memory) |
 | **LLMs** | Google Gemini 2.5 Pro |
-| **Backend** | Python 3.10+ |
+| Backend | Python 3.11.9+ |
 | **Visualization** | Matplotlib, Pandas |
 | **Search APIs** | TavilySearch, WebScraper Tools |
 
